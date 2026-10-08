@@ -1,0 +1,18 @@
+# build products (assembled from the repository by build.mjs)
+dist/
+.generated/
+src/*.generated.js
+
+# deployment configs (the *.example.json files are the templates)
+config/announcements.json
+config/server-info.json
+
+# local run artifacts
+dev*.log
+*.out
+
+# wrangler / npm
+node_modules/
+.wrangler/
+.dev.vars
+worker-configuration.d.ts

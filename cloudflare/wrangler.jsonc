@@ -1,0 +1,84 @@
+{
+  // Cloudflare Workers deployment of Stronghold-Protocol — see README.md.
+  // The Worker serves dist/ (assembled by build.mjs) and runs the game server in one Durable Object.
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  "name": "stronghold-protocol",
+  "main": "src/worker.js",
+
+  // nodejs_compat: Node APIs the server code uses (node:crypto, node:path, node:net.isIP, process.env, …).
+  // enable_nodejs_fs_module: the virtual file system (/tmp) that src/data-boot.js materializes the data into.
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat", "enable_nodejs_fs_module"],
+
+  // server/data.js derives ROOT from import.meta.url, which is undefined in a bundled Worker: see src/url-shim.js.
+  "alias": { "node:url": "./src/url-shim.js" },
+
+  // data/*.json imported as text (src/data-modules.generated.js) instead of parsed JSON modules.
+  "rules": [{ "type": "Text", "globs": ["**/data/*.json"], "fallthrough": true }],
+
+  // run_worker_first: the Worker routes /ws (upgrade), /healthz and /media/… itself and forwards everything
+  // else to the asset store, which still handles ETags, Range requests and gzip for static files.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+
+  // One instance holds the lobby, the rooms and every socket — the same shape as one Node process.
+  "durable_objects": {
+    "bindings": [{ "name": "GAME", "class_name": "GameServer" }],
+    // 部署新代码时怎么处理**正在运行**的游戏服务端对象（Wrangler ≥ 4.141；也是 Cloudflare 的默认值，这里写出来便于调整）：
+    //   deferred（默认）：等对象空闲（玩家全部退出、对象被回收）后再切换；到 max_delay 秒还没空闲就强制切换
+    //   immediate       ：部署完成即重启对象 —— 进行中的对局立刻结束（与「重启 Node 服务器」等价）
+    // 本项目的 DO 由 WebSocket 与对局定时器常驻，只要有人在线就不会空闲，所以 deferred 实际等于「最多等 max_delay 秒」。
+    // max_delay 单位是秒（默认 300，上限 86400）。想让部署更不打扰就在没人玩的时候部署，或把窗口调大。
+    "code_update_strategy": { "mode": "deferred", "max_delay": 900 }
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameServer"] }],
+
+  // Optional, mirroring the Node server's env vars (server/match/Match.js `env()`):
+  //   SP_VERIFY   off | sample | all   — re-simulate accepted client battle results
+  //   SP_COMBAT   client | server      — where battles are simulated
+  //   SP_FULL / SP_DRAFT               — content toggles
+  //   DEBUG 1                          — verbose logs
+  // Lobby/Network tunables (LOBBY_DEFAULTS / NET_DEFAULTS in the server code) can be set here as numbers,
+  // e.g. "maxRooms": 200, "maxMatchesPerAddr": 4, "heartbeatMs": 30000.
+  "vars": {
+    "SP_VERIFY": "off",
+    "SP_COMBAT": "client",
+    // 延迟优化（见 DEPLOY.md「延迟优化」）：整台游戏服务端只活在**一个** Cloudflare 机房里，且创建后不能迁移。
+    // 想换区域：设置 SP_DO_LOCATION_HINT（apac / apac-ne / apac-se / wnam / enam / weur / eeur / sam / oc / afr / me），
+    // 同时把 SP_DO_NAME 改成一个新名字（main → main-2）—— 提示只在创建对象时生效，新名字 = 新对象 = 新房。
+    // 本项目 DO 不存数据（对局在内存里，重启即结束），所以换名零代价。用 GET /where 查看当前 edge 与 DO 的机房。
+    // 怎么挑区域：先采样（多开几次 /where，或定时跑 20 次），看 edge.colo 多数落在哪个区域就用哪个 ——
+    //   大陆访问 Cloudflare 的落点会漂（实测同一台机器先后落在 LAX / SJC / SEA / AMS），
+    //   而 DO 只能固定一处，所以按"多数"选，别按单次结果选。
+    // 例：多数落在美西（SEA/LAX/SJC/PDX）→ 用 wnam（当前对象恰好就在 SEA，属于最优，无需改动）；
+    //     多数落在欧洲（AMS/FRA/LHR）→ 用 weur；多数落在香港/新加坡/东京 → 用 apac。
+    // "SP_DO_NAME": "main-2",              // ← 必须同时换名才会创建新对象（提示只在创建时生效）
+    // "SP_DO_LOCATION_HINT": "wnam",,
+    // 站点公告（见 DEPLOY.md §12.7；格式与 xinhai-ai fork 的 config/announcements.json 相同）：
+    //   方式一（推荐，改公告不用重新部署）：一条命令创建 KV 并自动把绑定写进本文件 ——
+    //     npm run kv:create           # 等价于 wrangler kv namespace create ANNOUNCE --binding ANNOUNCE --update-config
+    //   然后发布（本地文件 → KV）：
+    //     npm run announce:push       # = wrangler kv key put --binding=ANNOUNCE --remote announcements --path config/announcements.json
+    //                                   （注意必须带 --remote：Wrangler 4 默认写本地模拟存储）
+    //   注意：--update-config 会重写本文件，JSONC 注释可能被重排，建议先提交一次。
+    //   方式二（默认即可用，无需任何额外资源，但改一次要重新部署一次、会重启游戏服务端对象）：写 SP_ANNOUNCEMENTS
+    // 发布接口 POST /api/announce（Authorization: Bearer <SP_ADMIN_TOKEN>）会校验并写 KV，然后立即推送给在线页面。
+    // 「关于本服务器」（见 DEPLOY.md §12.7.3）：同一套三种来源，KV key 是 server-info——
+    //   npm run info:push            # = wrangler kv key put --binding=ANNOUNCE --remote server-info --path config/server-info.json
+    //   方式二写 "SP_SERVER_INFO"（同一份 JSON 字符串）；方式三放 config/server-info.json 由构建期打包进 Worker。
+    //   原版（sganggs）没有这个弹窗，配了就在首页左下角自建一个入口；不配则页面上什么都不出现。
+    //   发布接口 POST /api/server-info（同一个 SP_ADMIN_TOKEN）。
+    // "SP_ADMIN_TOKEN": "换成一串你自己知道的随机字符串",
+    // "SP_ANNOUNCEMENTS": "{\"announcements\":[{\"id\":\"hi\",\"text\":\"欢迎\",\"startAt\":\"2026-10-08T00:00:00+08:00\",\"durationSeconds\":86400}]}"
+  },
+
+  // 公告 / 服务器信息用的 KV 命名空间（可选）。上面 `npm run kv:create` 会自动写入这一项；也可以手动取消注释并填 id：
+  // key：`announcements`（公告）与 `server-info`（关于本服务器）。
+  // "kv_namespaces": [{ "binding": "ANNOUNCE", "id": "<命名空间 id>" }],
+
+  "observability": { "enabled": true }
+}

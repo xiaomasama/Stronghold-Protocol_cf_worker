@@ -1,0 +1,32 @@
+{
+  "title": "关于本服务器",
+  "intro": "这是一台由玩家自建的同人联机服务器，欢迎加入。",
+  "rows": [
+    {
+      "label": "服务器名称",
+      "value": "卫戍协议 · 朋友局"
+    },
+    {
+      "label": "联系邮箱",
+      "value": "you@example.com",
+      "href": "mailto:you@example.com"
+    },
+    {
+      "label": "问题反馈",
+      "value": "QQ 群 / B 站 / Discord",
+      "href": "https://example.com/",
+      "hint": "遇到服务器问题（掉线、延迟、卡房间）可以通过这里联系管理员。"
+    },
+    {
+      "label": "本服务器使用的 GitHub 仓库",
+      "value": "https://github.com/sganggs/Stronghold-Protocol",
+      "href": "https://github.com/sganggs/Stronghold-Protocol"
+    },
+    {
+      "label": "资源预载",
+      "value": "先在首页左下角预载素材，对局更顺畅",
+      "href": "/preload"
+    }
+  ],
+  "disclaimer": null
+}

@@ -6,6 +6,10 @@
 ![license](https://img.shields.io/badge/code%20license-GPL--3.0--or--later-blue)
 ![node](https://img.shields.io/badge/node-22%20%7C%2024-339933)
 
+> **本仓库 = 上游 [`sganggs/Stronghold-Protocol`](https://github.com/sganggs/Stronghold-Protocol) + Cloudflare Workers 部署适配层（[`cloudflare/`](cloudflare/)，**游戏代码零改动**）。**
+> 想在 Cloudflare Workers 上部署这份游戏：从 [`cloudflare/DEPLOY.md`](cloudflare/DEPLOY.md) 开始（逐步骤操作手册，含 KV 公告、资源预载、
+> 延迟优化与更新流程）；适配层的原理与已知差异见 [`cloudflare/README.md`](cloudflare/README.md)。
+
 ## 声明
 
 > [!IMPORTANT]

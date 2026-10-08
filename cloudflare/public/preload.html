@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>资源预载 · 卫戍协议：盟约</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px 16px;
+      background: radial-gradient(1200px 600px at 50% -10%, #16241f 0%, #0b100e 60%, #070a09 100%);
+      color: #d8e3de; font: 400 15px/1.6 system-ui, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    }
+    main { width: min(780px, 100%); border: 1px solid #2c3a35; border-radius: 8px; background: rgba(12,17,15,.86); padding: 22px 22px 18px; }
+    h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: .06em; color: #4ed8af; }
+    .sub { margin: 0 0 14px; color: #8ea79e; font-size: 13px; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 0; }
+    button {
+      cursor: pointer; font: inherit; padding: 7px 16px; border-radius: 5px; color: #d8e3de;
+      background: #14201c; border: 1px solid #2c3a35;
+    }
+    button.primary { background: #173a30; border-color: #2f6d59; color: #bdf0e0; }
+    button.check { background: #1b2330; border-color: #35506e; color: #cfe2f5; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    #result { display: none; margin: 6px 0 12px; padding: 10px 14px; border-radius: 6px; font-weight: 600; }
+    #result.ok { display: block; background: #12301f; border: 1px solid #2f6d59; color: #bdf0e0; }
+    #result.bad { display: block; background: #331a17; border: 1px solid #7a3b33; color: #f0b6ac; }
+    #result.busy { display: block; background: #1d2622; border: 1px solid #2c3a35; color: #cfe0d8; font-weight: 400; }
+    .bar { position: relative; height: 14px; border-radius: 7px; background: #101715; border: 1px solid #2c3a35; overflow: hidden; }
+    .bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2f6d59, #4ed8af); transition: width .15s linear; }
+    .bar > span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; letter-spacing: .08em; color: #eaf6f2; text-shadow: 0 1px 2px #000; }
+    dl { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 2px 14px; margin: 14px 0 6px; font-size: 13px; }
+    dt { color: #8ea79e; }
+    dd { margin: 0; font-variant-numeric: tabular-nums; }
+    .now { color: #8ea79e; font-size: 12px; height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fail { margin-top: 12px; border-top: 1px solid #2c3a35; padding-top: 10px; font-size: 12.5px; }
+    .fail ul { margin: 6px 0 0; padding-left: 18px; max-height: 170px; overflow: auto; color: #f0b6ac; }
+    .fail code { color: #f6a329; }
+    .note { margin-top: 10px; font-size: 12.5px; color: #8ea79e; }
+    .note.warn { color: #e7b96a; }
+    .foot { margin-top: 16px; display: flex; justify-content: space-between; gap: 12px; align-items: center; font-size: 12.5px; color: #8ea79e; }
+    a { color: #4ed8af; }
+    .done { color: #4ed8af; font-weight: 600; }
+    #missingBox { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>资源预载 / 校验</h1>
+    <p class="sub">把游戏素材预先下载进浏览器缓存（立绘 / Spine / 音频 / 数据 / 语言包 / 本地提取的官方素材）。
+      <b>开始预载</b>会先探测缓存，已在本机的文件直接跳过；<b>校验资源</b>会逐个核对大小与 SHA-256，
+      确认缓存里的确实是服务器上的那份。清单由服务器在构建时生成，含每个文件的字节数与哈希。</p>
+
+    <div class="row">
+      <button id="go" class="primary" type="button">开始预载（跳过已有）</button>
+      <button id="verify" class="check" type="button">校验资源</button>
+      <button id="stop" type="button" disabled>停止</button>
+      <button id="retry" type="button" disabled>重试失败项</button>
+      <button id="list" type="button">重新读取清单</button>
+    </div>
+
+    <div id="result"></div>
+
+    <div class="bar"><i id="fill"></i><span id="pct">0%</span></div>
+    <div class="now" id="now"></div>
+
+    <dl>
+      <dt>总数</dt><dd id="total">—</dd>
+      <dt>体积</dt><dd id="bytes">—</dd>
+      <dt>已有（跳过）</dt><dd id="skipped">0</dd>
+      <dt>已获取</dt><dd id="done">0</dd>
+      <dt>校验通过</dt><dd id="passed">0</dd>
+      <dt>失败</dt><dd id="failed">0</dd>
+      <dt>用时</dt><dd id="elapsed">0.0s</dd>
+      <dt>速度</dt><dd id="speed">—</dd>
+    </dl>
+
+    <div class="note" id="warnbox" hidden></div>
+    <div class="note warn" id="missingBox"></div>
+
+    <div class="fail" id="failbox" hidden>
+      <b>失败 / 不符的文件</b>（<code>404</code> = 服务器还没有这个素材，可用 <code>node tools/setup.mjs</code> 补齐后重新构建再试）：
+      <ul id="faillist"></ul>
+    </div>
+
+    <div class="foot">
+      <span id="state">正在读取清单…</span>
+      <a href="/">← 返回游戏</a>
+    </div>
+  </main>
+  <script src="/preload.js"></script>
+</body>
+</html>

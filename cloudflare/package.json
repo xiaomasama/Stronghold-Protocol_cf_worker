@@ -1,0 +1,21 @@
+{
+  "name": "stronghold-protocol-cloudflare",
+  "private": true,
+  "description": "Cloudflare Workers deployment of Stronghold-Protocol (additive adapter; nothing in the game code is modified)",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs && wrangler dev",
+    "dev:stop": "node tools/stop-dev.mjs",
+    "deploy": "node build.mjs && wrangler deploy",
+    "deploy:preview": "node build.mjs && wrangler deploy --name stronghold-protocol-preview",
+    "smoke": "node tools/smoke.mjs",
+    "tail": "wrangler tail",
+    "kv:create": "wrangler kv namespace create ANNOUNCE --binding ANNOUNCE --update-config",
+    "announce:push": "wrangler kv key put --binding=ANNOUNCE --remote announcements --path config/announcements.json",
+    "info:push": "wrangler kv key put --binding=ANNOUNCE --remote server-info --path config/server-info.json"
+  },
+  "devDependencies": {
+    "wrangler": "^4.147.0"
+  }
+}

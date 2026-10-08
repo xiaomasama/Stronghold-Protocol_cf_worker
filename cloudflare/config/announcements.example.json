@@ -1,0 +1,25 @@
+{
+  "announcements": [
+    {
+      "id": "welcome",
+      "type": "scroll",
+      "text": "欢迎！首次进入建议先打开 /preload 预载资源，对局会更顺畅。",
+      "startAt": "2026-10-08T00:00:00+08:00",
+      "durationSeconds": 86400,
+      "level": "info",
+      "enabled": false
+    },
+    {
+      "id": "maintenance-example",
+      "type": "popup",
+      "title": "更新公告",
+      "text": "本服务器已更新到 0.2.1：新增语言包与内容包支持。遇到问题请附带 /where 的输出。",
+      "url": "https://github.com/sganggs/Stronghold-Protocol",
+      "autoPopup": true,
+      "startAt": "2026-10-08T00:00:00+08:00",
+      "durationSeconds": 3600,
+      "level": "warning",
+      "enabled": false
+    }
+  ]
+}
