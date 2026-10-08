@@ -4,7 +4,15 @@
 
 > **分步操作手册见 [DEPLOY.md](DEPLOY.md)**：从准备到上线、验证、运维、回滚、排错、成本，每一步都有命令与期望输出。本文是总览（架构、为什么是 Workers、实测结论、已知差异）。
 
-**这个目录是纯增量适配层：仓库里原有的文件一个都没有改。** 以后 `git pull` 更新上游代码不会和它冲突；上游改了服务端逻辑，适配层通常也不用动（见下方「上游更新后」）。
+**这个目录是纯增量适配层：游戏代码一个字节都没改**（fork 里唯一动过的上游文件，是根 `README.md` 顶部那三行指向本目录的说明）。以后 `git pull` 更新上游代码不会和它冲突；上游改了服务端逻辑，适配层通常也不用动（见下方「上游更新后」）。
+
+**这份适配层在哪、怎么拿（三种都行）**：
+
+1. **已经备好的仓库**：[`xiaomasama/Stronghold-Protocol_cf_worker`](https://github.com/xiaomasama/Stronghold-Protocol_cf_worker) = 上游 `sganggs/Stronghold-Protocol` + 本目录。clone 下来即可部署，`cloudflare/` 已经在仓库里，不需要再拷。
+2. **任意上游检出**：把 `cloudflare/` 这个目录整个拷进检出根目录，然后在根目录 `npm ci`、`node tools/setup.mjs`（素材）。
+3. **独立发布包**：`node tools/export.mjs` 导出一个只含适配层的目录，给"不想 fork、只想拿适配层"的人用（见下方「对外发布」）。
+
+三种形态里的 `cloudflare/` 内容完全一致。
 
 ```
 cloudflare/
@@ -44,7 +52,7 @@ cloudflare/
 
 ## 部署步骤
 
-前置：仓库根目录已经 `npm ci`，并且建议先执行一次 `node tools/setup.mjs` 下载游戏素材（约 270 MB，`public/assets`、`public/fonts` 都在 `.gitignore` 里，不会随 git 走）。不下载也能部署，只是画面用占位图。
+前置：仓库根目录已经 `npm ci`（代码从哪来见上面「这份适配层在哪、怎么拿」；用现成仓库就直接 `git clone https://github.com/xiaomasama/Stronghold-Protocol_cf_worker.git`，国内网络可加 `ghproxy.net/` 前缀），并且建议先执行一次 `node tools/setup.mjs` 下载游戏素材（约 270 MB，`public/assets`、`public/fonts` 都在 `.gitignore` 里，不会随 git 走）。不下载也能部署，只是画面用占位图。
 
 ```bash
 # 1. 安装适配层的依赖（只是 wrangler，装在 cloudflare/ 里，不动仓库的 package.json）
@@ -119,7 +127,10 @@ npx wrangler deploy               # 或 npm run deploy
 ## 上游更新后
 
 ```bash
-git pull                          # 更新游戏本体（不会碰到 cloudflare/）
+# 取新代码：从 fork 部署 → git pull 连适配层一起更新；要和上游同步则加一条 upstream 远程后合并
+#   git remote add upstream https://github.com/sganggs/Stronghold-Protocol.git
+#   git fetch upstream && git merge upstream/master     （根 README 顶部那几行说明如冲突，两边都保留）
+# 从自己的上游检出部署 → git pull（不会碰到 cloudflare/ 这个新增目录）
 cd cloudflare && npm run build    # 重新组装 dist/、.generated/ 与生成模块（新的 data/*.json 会自动进包）
 npx wrangler deploy
 ```
@@ -135,7 +146,7 @@ npx wrangler deploy
 
 ## 对外发布
 
-适配层是"拷进检出就能用"的形态：`node tools/export.mjs` 会生成一个独立目录（默认 `../Stronghold-Protocol-Cloudflare`），里面有面向使用者的 `README.md`、`VERSION`（记录验证过的上游版本与提交）、`LICENSE`/`NOTICE.md`，以及可直接拷入任意 Stronghold-Protocol 检出的 `cloudflare/`（不含依赖与构建产物，共 20 余个文件）。
+适配层是"拷进检出就能用"的形态：`node tools/export.mjs` 会生成一个独立目录（默认 `../Stronghold-Protocol-Cloudflare`），里面有面向使用者的 `README.md`、`VERSION`（记录验证过的上游版本与提交）、`LICENSE`/`NOTICE.md`，以及可直接拷入任意 Stronghold-Protocol 检出的 `cloudflare/`（不含依赖与构建产物，共 20 余个文件）。仓库 [`Stronghold-Protocol_cf_worker`](https://github.com/xiaomasama/Stronghold-Protocol_cf_worker) 里已经带着 `cloudflare/`，这个独立包是给"不想 fork、只想拿适配层"的人准备的。
 
 兼容性：**原版 sganggs 0.2.1** 与 **fork xinhai-ai 0.2.0** 都实测通过 —— 构建会自动识别两者的差异：前者需要把 `server/sim/content` 里的计算型动态导入改写成字面量，后者源码本身就是字面量加载器（0 处改写）；前者由适配层注入公告横幅，后者自带的公告客户端接管显示且公告数据继续沿用其 `config/announcements.json`。
 

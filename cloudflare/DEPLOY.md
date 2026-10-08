@@ -42,6 +42,21 @@ npm -v
 
 ## 2. 第 1 步：拿到代码并安装依赖
 
+**代码从哪来（二选一）**：
+
+- **方式 A（省事，推荐）：clone 已经备好的仓库** —— [`xiaomasama/Stronghold-Protocol_cf_worker`](https://github.com/xiaomasama/Stronghold-Protocol_cf_worker) = 上游 `sganggs/Stronghold-Protocol` + 本适配层（`cloudflare/` 已在仓库里，clone 下来就能直接部署）：
+
+  ```powershell
+  git clone https://github.com/xiaomasama/Stronghold-Protocol_cf_worker.git
+  cd Stronghold-Protocol_cf_worker
+  # 国内网络 github.com:443 不通时，走实时代理（§13.1 末尾有"抓到的提交号与官方 API 对得上"的校验方法）：
+  # git clone https://ghproxy.net/https://github.com/xiaomasama/Stronghold-Protocol_cf_worker.git
+  ```
+
+- **方式 B：用你自己的上游检出**（原始 sganggs，或 xinhai-ai 的 fork）—— 把适配层目录 `cloudflare/` 整个放进检出根目录即可。适配层不含任何对上游文件的改动，`git pull` 不会和它冲突；独立发布包见 [README.md](README.md) 的「对外发布」。
+
+然后安装依赖（在**仓库根目录**跑，不是 `cloudflare/` 里）：
+
 ```powershell
 cd <你的 Stronghold-Protocol 项目目录>
 npm ci
@@ -759,9 +774,22 @@ npm run info:push                                       # 写入 KV（key: serve
 
 ### 13.1 更新游戏版本（上游有新提交 / 新 Release）
 
+**先取新代码**（看你用哪种部署形态）：
+
+- **部署的就是 fork（`Stronghold-Protocol_cf_worker`）**：`git pull` 会连适配层更新一起拿到；要和上游保持同步，加一条 `upstream` 远程再合并：
+
+  ```powershell
+  git remote add upstream https://github.com/sganggs/Stronghold-Protocol.git   # 只需一次
+  git fetch upstream && git merge upstream/master
+  #   合并时根目录 README.md 顶部那几行「本仓库 = 上游 + 适配层」的说明若与上游冲突，两边都保留即可
+  ```
+
+- **自己的上游检出 + 把 `cloudflare/` 放进去**：`git pull` 不会碰到 `cloudflare/` 这个新增目录（要更新适配层时，用发布包覆盖该目录）。
+
+**然后重新构建并部署**：
+
 ```powershell
 cd <你的 Stronghold-Protocol 项目目录>
-git pull                       # 不会碰到 cloudflare/ 这个新增目录
 npm ci                         # 依赖有变化时
 node tools/setup.mjs           # 有新素材时（会跳过已存在的）
 cd cloudflare
@@ -781,6 +809,10 @@ git fetch --depth=1 https://ghproxy.net/https://github.com/sganggs/Stronghold-Pr
 git rev-parse FETCH_HEAD        # ← 必须与第 1 步的 sha 一致
 git reset --hard FETCH_HEAD     # 浅克隆没有共同祖先，--ff-only 会被拒
 ```
+
+> 同一手法也适用于你自己的 fork（含适配层）：把 URL 换成
+> `https://ghproxy.net/https://github.com/<你的用户名>/Stronghold-Protocol_cf_worker.git`；push 也可以走它——
+> `git push https://ghproxy.net/https://github.com/<你>/Stronghold-Protocol_cf_worker.git master`（代理会转发你的 GitHub 凭据）。
 
 要点：
 - **每次都要 `npm run build`**：`dist/` 是快照，不重新构建就不会带上新代码/新数据/新素材。
@@ -845,6 +877,9 @@ node tools/export.mjs D:\发布\sp-cloudflare   # 或指定目录
 ```
 
 生成的是"试用包"：`README.md`（面向使用者）、`VERSION`（上游版本 + 提交 + 兼容性声明）、`LICENSE`/`NOTICE.md`，以及一个可直接拷进任意 Stronghold-Protocol 检出的 `cloudflare/`（排除 `node_modules`、`dist`、`.generated`、生成模块与日志）。
+
+> 已经有一个把两者合到一起的仓库：[`xiaomasama/Stronghold-Protocol_cf_worker`](https://github.com/xiaomasama/Stronghold-Protocol_cf_worker)（上游 + `cloudflare/`，见 §2 方式 A）。
+> 想把适配层更新推回那个仓库：`cd <该仓库>` → 把 `cloudflare/` 覆盖成最新 → `git add cloudflare && git commit && git push`（仓库里已有 `cloudflare/`，不需要 export 再拷）。
 
 ### 13.7 彻底删除
 
