@@ -16,3 +16,7 @@ node_modules/
 .wrangler/
 .dev.vars
 worker-configuration.d.ts
+
+# release packaging (kept local on purpose — not published with the repository)
+tools/release.mjs
+RELEASE.local.md

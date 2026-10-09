@@ -883,30 +883,7 @@ node tools/export.mjs D:\发布\sp-cloudflare   # 或指定目录
 > 已经有一个把两者合到一起的仓库：[`xiaomasama/Stronghold-Protocol_cf_worker`](https://github.com/xiaomasama/Stronghold-Protocol_cf_worker)（上游 + `cloudflare/`，见 §2 方式 A）。
 > 想把适配层更新推回那个仓库：`cd <该仓库>` → 把 `cloudflare/` 覆盖成最新 → `git add cloudflare && git commit && git push`（仓库里已有 `cloudflare/`，不需要 export 再拷）。
 
-### 13.7 打包成 Release（源码 + 素材的完整包）
-
-想发一个"解压即可构建部署"的压缩包（= 本检出的全部源码 + 上游 release 里那份游戏素材）：
-
-```powershell
-cd cloudflare
-node tools/release.mjs                     # 版本号取自 shared/constants.js，自动下载同版本的上游完整包
-node tools/release.mjs --from D:\下载\Stronghold-Protocol-v0.2.2.zip   # 已手工下好就用它（全程不联网）
-node tools/release.mjs --with-node-modules # 连仓库根目录的 node_modules 一起打包（上游的包就是这么发的）
-node tools/release.mjs --repo <某个检出>    # 打包另一个目录（默认打包本工具所在的那个检出）
-```
-
-它会：问 GitHub API 要 `Stronghold-Protocol-v<版本>.zip` 的地址/size/sha256 → 下载到 `.cache/releases/`（可断点续传，github.com 不通时自动改走 ghproxy 镜像）并**核对官方 sha256** → 把包里的 `public/assets/**`、`public/fonts/**`、`data/local-assets.json` **原样**搬进输出（连同压缩数据一起拷贝，不重新压缩，500 MB 素材几秒过完）→ 再加上本检出的全部源码（git 检出则取 `git ls-files`；不是 git 检出就遍历，`node_modules`、`dist`、`.generated`、`.cache`、`cloudflare/config/*.json` 等产物/私有文件都不会进包）→ 写出 `../Stronghold-Protocol_cf_worker-release/` 下的 `<名字>-v<版本>.zip`、`.sha256` 和一份可直接粘贴的 release notes，最后**重新打开 zip 抽查**（源码、`data/local-assets.json`、`public/assets` 里的文件是否都在）。
-
-发布由你自己完成（脚本只产出文件，不碰任何写接口）——把 zip、`.sha256` 与 notes 上传到你惯用的发布流程即可。
-
-要点：
-
-- **版本必须一致**：流程按 `shared/constants.js` 的 `APP_VERSION` 去取同版本的上游包 —— 上游每次发版都会重新生成素材清单，混版本会缺图或用错图。
-- 网速慢时（github.com 不通、单个代理只有几百 KB/s）：用 `--from` 指向你自己下好的包，工具不联网也能跑完；也可以只下上游的 `-update.zip`（约 80 MB）配上本机已有的旧版素材凑齐，但那份**不保证**与官方完整包逐字节一致，正式发布建议用完整包。
-- 素材只随包发布，不要进 git：`public/assets`、`public/fonts`、`data/local-assets.json` 都在 `.gitignore` 里。
-- 打包用的是本工具自带的 zip 读写（纯 Node，无依赖），所以中文文件名不会像 Windows 的命令行 zip 那样被按 ANSI 转码 —— 上游 0.2.2 才刚修过这个坑。
-
-### 13.8 彻底删除
+### 13.7 彻底删除
 
 ```powershell
 cd cloudflare
