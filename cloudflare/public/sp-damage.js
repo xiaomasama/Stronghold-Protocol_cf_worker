@@ -20,6 +20,8 @@
 //   * names come from the client's own data (`/js/data.js`: chess, devices, bonds) and, when the client ships it,
 //     its i18n (`/shared/i18n.js` t). A missing module just leaves ids on screen.
 //
+// The 交流 wheel's panel opens right over this corner, so the whole widget stands down while it is up.
+//
 // The panel describes the battle *on screen* (your own field; teammates' fields have their own runner entry and are
 // deliberately not mixed in). Best-effort throughout: no runner, no battle or a hidden tab leaves the game as it was.
 
@@ -183,6 +185,7 @@
     '#sp-dmg{position:fixed;left:10px;bottom:46px;z-index:2147482500;display:none;flex-direction:column;align-items:flex-start;',
     'gap:5px;font:500 12px/1.35 system-ui,"Noto Sans SC",sans-serif;color:#cfe0d8;pointer-events:none}',
     '#sp-dmg.sp-in-match{display:flex}',
+    '#sp-dmg.sp-away{display:none !important}',   // 交流轮盘打开时整条让开（轮盘就挂在左下角这位置上）
     '#sp-dmg>*{pointer-events:auto}',
     '#sp-dmg-head{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:12px;border:1px solid #2c3a35;',
     'background:rgba(10,16,14,.82);cursor:pointer;backdrop-filter:blur(3px);box-shadow:0 2px 12px rgba(0,0,0,.4)}',
@@ -340,19 +343,29 @@
     }
   }
 
-  /** Start/stop the refresh with the screen: the panel only exists in a match, the timer only while it is open. */
+  /** The 交流 wheel's panel is rendered right above its button — i.e. exactly over this widget's corner. */
+  const wheelOpen = () => !!document.querySelector('.ewheel__panel');
+
+  /**
+   * Start/stop the refresh with the screen: the panel only exists in a match, the timer only while it is open and
+   * nothing else claims the corner (the wheel).
+   */
   const sync = () => {
     const inMatch = !!document.querySelector('.screen.gm');
+    const away = wheelOpen();
     root.classList.toggle('sp-in-match', inMatch);
-    if (inMatch && open && !timer) { tick(); timer = setInterval(tick, REFRESH_MS); }
-    if (!inMatch && timer) { clearInterval(timer); timer = null; }
-    if (inMatch && !open) { tick(); sum.textContent = ''; last = null; lastKey = ''; }   // collapsed: no timer
+    root.classList.toggle('sp-away', away);
+    const shouldRun = inMatch && open && !away;
+    if (shouldRun && !timer) { tick(); timer = setInterval(tick, REFRESH_MS); }
+    if (!shouldRun && timer) { clearInterval(timer); timer = null; }
+    if (inMatch && !open && !away) { tick(); sum.textContent = ''; last = null; lastKey = ''; }   // collapsed: no timer
   };
   const isScreenNode = (n) => n.nodeType === 1 && n.classList && n.classList.contains('screen');
-  const carriesScreen = (n) => n.nodeType === 1 && (isScreenNode(n) || !!n.querySelector('.screen'));
+  const isWheelNode = (n) => n.nodeType === 1 && n.classList && (n.classList.contains('ewheel__panel') || n.classList.contains('ewheel'));
+  const carriesScreen = (n) => n.nodeType === 1 && (isScreenNode(n) || isWheelNode(n) || !!n.querySelector('.screen') || !!n.querySelector('.ewheel__panel'));
   new MutationObserver((records) => {
     for (const r of records) {
-      if (r.type === 'attributes') { if (isScreenNode(r.target)) { sync(); return; } continue; }
+      if (r.type === 'attributes') { if (isScreenNode(r.target) || isWheelNode(r.target)) { sync(); return; } continue; }
       for (const n of r.addedNodes) if (carriesScreen(n)) { sync(); return; }
       for (const n of r.removedNodes) if (carriesScreen(n)) { sync(); return; }
     }
