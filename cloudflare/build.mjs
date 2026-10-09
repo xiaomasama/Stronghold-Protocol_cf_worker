@@ -29,8 +29,11 @@ const repo = join(here, '..');
 const dist = join(here, 'dist');
 const log = (...a) => console.log('[cf-build]', ...a);
 
-/** server/index.js BUILD_INPUTS: the browser runtime the build tag describes. */
-const BUILD_INPUTS = ['public/index.html', 'public/js', 'public/css'];
+/** server/index.js BUILD_INPUTS: the browser runtime the build tag describes. Upstream 0.2.2 added the served
+ *  sim/shared/data trees to it — the browser imports /sim/ and /shared/ and caches /data/ JSON, so without them a
+ *  simulation-only or data-only deploy would not reach pages that are already open (the page compares this tag
+ *  across two /healthz polls and reloads when it changes). */
+const BUILD_INPUTS = ['public/index.html', 'public/js', 'public/css', 'server/sim', 'shared', 'data'];
 /** server/index.js SIM_PRIVATE: never served (case-insensitive). */
 const SIM_PRIVATE = new Set(['nodedata.js']);
 /** public/ subdirectories served with a 1-day Cache-Control (server/index.js LONG_CACHE_DIRS). */

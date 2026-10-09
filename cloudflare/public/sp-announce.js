@@ -81,11 +81,19 @@
     '#sp-ann-bar{position:fixed;left:0;right:0;top:0;z-index:2147483000;display:flex;gap:8px;align-items:center;',
     'padding:7px 12px;font:500 13px/1.45 system-ui,"Noto Sans SC",sans-serif;color:#e8f5f0;',
     'background:linear-gradient(180deg,rgba(8,14,12,.94),rgba(8,14,12,.86));border-bottom:1px solid #2c3a35;',
-    'box-shadow:0 2px 12px rgba(0,0,0,.45)}',
+    'box-shadow:0 2px 12px rgba(0,0,0,.45);pointer-events:none}',
     '#sp-ann-bar .sp-ann-dot{width:7px;height:7px;border-radius:50%;flex:none;box-shadow:0 0 8px currentColor}',
-    '#sp-ann-bar .sp-ann-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    // the bar is an overlay, so only its own parts take clicks: the game's top-bar buttons underneath (a title
+    // page's 语言 / 统计, a lobby's 返回 …) stay clickable no matter where the strip happens to lie
+    '#sp-ann-bar .sp-ann-dot,#sp-ann-bar .sp-ann-text,#sp-ann-bar button{pointer-events:auto}',
+    // shrink to the notice instead of stretching across the strip (a long one still truncates with an ellipsis)
+    '#sp-ann-bar .sp-ann-text{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '#sp-ann-bar button{flex:none;cursor:pointer;border:1px solid #2c3a35;background:transparent;color:#9fb4ac;',
     'border-radius:4px;font:inherit;padding:2px 8px}',
+    // …and the pieces it would cover visually move down while it is up: the title page's corner tools
+    // (语言 / 统计, absolute at .38rem) and the lobby / room top bar (in flow, first flex child)
+    'html.sp-ann-on .title-corner--tl,html.sp-ann-on .title-corner--tr{top:calc(.38rem + 46px)}',
+    'html.sp-ann-on .topbar{margin-top:42px}',
     '#sp-ann-chip{order:2;display:flex;align-items:center;gap:7px;padding:6px 10px;border-radius:14px;',
     'border:1px solid #2c3a35;background:rgba(10,16,14,.82);cursor:pointer;backdrop-filter:blur(3px);',
     'font:500 12.5px/1.2 system-ui,"Noto Sans SC",sans-serif;color:#cfe0d8;box-shadow:0 2px 12px rgba(0,0,0,.4)}',
@@ -127,6 +135,7 @@
     bar?.remove();
     bar = null;
     barId = null;
+    document.documentElement.classList.remove('sp-ann-on');
   }
 
   /** Show a notice as the top bar. A dismissed notice is not shown again — the chip below is the way back. */
@@ -151,6 +160,7 @@
     close.addEventListener('click', () => { remember(a.id); hideBar(); updateChip(); });
     bar.append(dot, text, close);
     document.body.appendChild(bar);
+    document.documentElement.classList.add('sp-ann-on'); // pushes the game's own top strips down (see the style above)
   }
 
   // ------------------------------------------------------------------ auto-popup
