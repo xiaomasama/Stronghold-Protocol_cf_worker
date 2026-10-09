@@ -316,8 +316,27 @@ const zipPath = join(outDir, `${name}-v${appVersion}.zip`);
 const notesPath = join(outDir, `RELEASE-NOTES-${tag}.md`);
 mkdirSync(outDir, { recursive: true });
 
-const pack = explicitPack ? { path: explicitPack, meta: { name: relative(repo, explicitPack) || explicitPack, digest: null, size: statSync(explicitPack).size } } : await fetchPack(appVersion);
-if (explicitPack) log(`using the pack given on the command line: ${explicitPack} (${(pack.meta.size / 1048576).toFixed(1)} MiB)`);
+let pack;
+if (explicitPack) {
+  // a locally downloaded pack gets the same treatment as one this script fetched: size and sha256 against the API
+  const asset = upstreamAsset(appVersion);
+  pack = {
+    path: explicitPack,
+    meta: { name: explicitPack.split(/[\\/]/).pop(), size: statSync(explicitPack).size, digest: asset?.digest ?? null, expected: asset?.size ?? null },
+  };
+  log(`using the pack given on the command line: ${explicitPack} (${(pack.meta.size / 1048576).toFixed(1)} MiB)`);
+  if (pack.meta.expected && pack.meta.size !== pack.meta.expected) {
+    console.error(`[release] that file is ${pack.meta.size} B, but upstream's ${upstreamAssetName(appVersion)} is ${pack.meta.expected} B — wrong or incomplete download`);
+    process.exit(1);
+  }
+  if (pack.meta.digest && !noVerify) {
+    const got = await sha256File(explicitPack);
+    if (got !== pack.meta.digest) { console.error(`[release] sha256 mismatch — this file is not the published asset\n  expected ${pack.meta.digest}\n  got      ${got}`); process.exit(1); }
+    log(`sha256 matches the GitHub API digest (${got.slice(0, 16)}…)`);
+  }
+} else {
+  pack = await fetchPack(appVersion);
+}
 
 const src = readZip(pack.path);
 log(`pack holds ${src.entries.length} entries${src.zip64 ? ' (zip64)' : ''}`);
@@ -395,7 +414,9 @@ const digest = await sha256File(zipPath);
 writeFileSync(`${zipPath}.sha256`, `${digest}  ${name}-v${appVersion}.zip\n`, 'utf8');
 
 const commit = (() => { try { const r = spawnSync('git', ['-C', repo, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }); return r.status === 0 ? r.stdout.trim() : null; } catch { return null; } })();
-const packLine = pack.meta.digest ? `上游完整包 \`${pack.meta.name}\`（sha256 \`${pack.meta.digest}\` 已核对）` : `上游完整包 \`${pack.meta.name}\``;
+const upstreamAssetName = `Stronghold-Protocol-v${appVersion}.zip`;
+const localPack = explicitPack ? `（本地文件 \`${explicitPack.split(/[\\/]/).pop()}\`）` : '';
+const packLine = `上游 release 的 \`${upstreamAssetName}\`${localPack}${pack.meta.digest ? `，sha256 \`${pack.meta.digest}\` 已核对` : ''}`;
 writeFileSync(notesPath, `# Stronghold-Protocol_cf_worker ${tag}
 
 把《卫戍协议：盟约》部署到 Cloudflare Workers 的**完整包**：上游 v${appVersion} 的全部源码 + \`cloudflare/\` 适配层，
