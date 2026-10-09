@@ -128,6 +128,7 @@ log(`关于本服务器: the checkout ${checkoutHasAbout ? 'ships its own dialog
     ['/sp-preload-link.js', true, ''],
     ['/sp-announce.js', !upstreamAnnounceClient, ''],
     ['/sp-tweaks.js', true, ` data-about-ui="${checkoutHasAbout ? 'checkout' : 'none'}"`],
+    ['/sp-damage.js', true, ''],   // the in-match damage panel (菜单外只在对局里出现，自带开关)
   ];
   for (const [src, want, extra] of wanted) {
     if (!want || html.includes(src)) continue;

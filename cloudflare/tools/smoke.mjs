@@ -252,6 +252,10 @@ console.log('\n[announce & preload]');
     upstreamClient ? 'announcements handled by the upstream client (no injection)' : 'the served index.html is wired to the announcement client');
   check(/sp-preload-link\.js/.test(page.body || ''), 'the served index.html carries the /preload entry (injected on every upstream)');
   check(/sp-tweaks\.js/.test(page.body || ''), 'the served index.html carries the landing-page tweaks');
+  const dmg = await get('/sp-damage.js');
+  check(dmg.status === 200 && dmg.type.includes('javascript') && /__SP_RUNNER__/.test(dmg.body || ''),
+    "GET /sp-damage.js → the in-match damage panel (reads the game's own battle runner)", `${dmg.status} ${dmg.type}`);
+  check(/sp-damage\.js/.test(page.body || ''), 'the served index.html is wired to the damage panel');
   // The tweaks script needs to know whether the checkout ships a 「关于本服务器」 dialog of its own: build.mjs
   // probes the checkout and bakes the answer into the script tag (checkout → patch it, none → build our own).
   const aboutTag = /<script src="\/sp-tweaks\.js" defer data-about-ui="(checkout|none)"><\/script>/.exec(page.body || '');

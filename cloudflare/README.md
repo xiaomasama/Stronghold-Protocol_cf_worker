@@ -119,6 +119,9 @@ npx wrangler deploy               # 或 npm run deploy
 - **更新与预览**：部署新版本会重启游戏服务端对象（进行中的对局结束、玩家自动重连回大厅 —— 与 Node 版"重启服务器"同义，本项目无存档）。可在没人玩时部署；`wrangler.jsonc` 里已配 `durable_objects.code_update_strategy`（`deferred 900` 秒 = 最多再等 15 分钟）。想完全不打扰线上就用 `npm run deploy:preview` 起一个独立 Worker（独立 DO 与素材）。详见 DEPLOY.md §12.6。
 - **站点公告与资源预载（适配层自带，不改游戏代码）**：`/api/announcement`、`/api/popup-announcement`、`POST /api/announce`（Bearer 令牌）与一个构建期注入 `dist/index.html` 的横幅/弹窗脚本 `public/sp-announce.js`——横幅关闭、弹窗点过之后，左下角还会留一个 `● 公告` 挂件（未读带 `新` 徽标），点开是把当前所有生效公告列在一起的面板，公告随时可查；资源预载/校验页在 `/preload`（清单由构建期生成，含每个文件的字节数与 SHA-256：可跳过本机已有的、也可逐个校验哈希）；首页左下角有一个注入的小挂件：既是入口（未预载时带提示徽章），也是**后台下载器**（点 ▶ 边玩边下、刷新续传、可暂停）。改公告用 KV 即可，不必重新部署（也就不会打断对局）。详见 DEPLOY.md §12.7。
 - **内容包与语言（0.2.x）**：`/packs/index.json`（客户端启动时读取）与 `/packs/<id>/<file>`（只服务 manifest 点名的文件）由适配层实现 `src/packs.js`；索引与白名单在构建期用上游的 `server/packs.js` 扫描生成（Worker 读不了文件系统）。语言包本身是普通静态文件：`/i18n/<code>.json`、`/data/i18n/<code>.json`。
+- **游戏内伤害统计（适配层自带）**：`public/sp-damage.js` 在对局内左下角加一条可开可关的「⚔ 伤害统计」——总输出/DPS、我的占比、
+  对领袖/治疗/阵亡、击杀与漏怪，以及**按来源拆分的输出**（干员、其召唤物、装置、未归属差额）与当前羁绊层数；
+  数据全部取自游戏自己的浏览器战斗模拟（`__SP_RUNNER__`），不重算数值。见 DEPLOY.md §12.7.5。
 - **首页定制**：`GET /api/server-info`（KV / `SP_SERVER_INFO` / `cloudflare/config/server-info.json`）驱动标题页「关于本服务器」。注入的 `public/sp-tweaks.js` 在 fork 上替换其弹窗里的联系信息、并隐藏其自带但在此部署上不可用的「预载资源」pill（换成左下角 `/preload` 挂件）；**在原版（无此弹窗）上则自建一个左下角「ⓘ 关于本服务器」按钮 + 弹窗，未配置文档时不出现任何新增元素**。三个左下角挂件（资源预载 / 公告 / 关于本服务器）共用一个容器，**按界面自动显隐：公告与关于本服务器只在最初始的标题页出现，资源预载在大厅 / 房间仍可用、只在局内收起**（靠客户端 `.screen…` 类的变化判断，无轮询；见 DEPLOY.md §12.7.4）。见 DEPLOY.md §12.7.3。
 - **自适应上游重构**：0.2.x 把 kits 加载搬进了 `server/sim/content/kits/index.js`（每个干员一个文件、209 个），`build.mjs` 会把这些"计算型动态导入"改写成字面量；写法一变构建就**报错**，不会让技能内容在运行时静默缺失。
 - **延迟**：整台游戏服务端只活在**一个** Cloudflare 机房里（Durable Object 创建后不可迁移），所以"玩家→边缘"和"边缘→DO"两跳都要看。`GET /where` 会分别报出两处机房与 Cloudflare 实测的客户端 RTT；用 `[vars]` 的 `SP_DO_LOCATION_HINT` + 一个新 `SP_DO_NAME` 可以把 DO 换到离玩家更近的区域（本项目 DO 不存数据，换名零代价）。详见 DEPLOY.md §12.5。
