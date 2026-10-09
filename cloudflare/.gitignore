@@ -17,6 +17,6 @@ node_modules/
 .dev.vars
 worker-configuration.d.ts
 
-# release packaging (kept local on purpose — not published with the repository)
+# local-only helper files (not part of the published adapter)
 tools/release.mjs
 RELEASE.local.md
