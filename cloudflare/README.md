@@ -29,7 +29,10 @@ cloudflare/
 │   └── media.js        /media/bgm/act1 → /assets/audio/bgm/act1.mp3 的无扩展名音频路由
 └── tools/
     ├── smoke.mjs       端到端自检：静态资源 + /healthz + 真实对局协议（建房/加入/断线重连）
-    └── match-drive.mjs 真打一局：建房 → AI 补位 → 开打 → 走完全部阶段（验证服务端战斗模拟）
+    ├── match-drive.mjs 真打一局：建房 → AI 补位 → 开打 → 走完全部阶段（验证服务端战斗模拟）
+    ├── export.mjs      导出只含适配层的独立发布包（不含依赖与构建产物）
+    ├── release.mjs     打包完整 Release：本检出全部源码 + 上游 release 里的游戏素材（自带 zip 读写，UTF-8 名安全）
+    └── stop-dev.mjs    停掉残留的 wrangler dev / workerd（Windows 上构建前必做，见 DEPLOY.md §14）
 ```
 
 ## 为什么是 Workers，不是 Pages
@@ -147,6 +150,8 @@ npx wrangler deploy
 ## 对外发布
 
 适配层是"拷进检出就能用"的形态：`node tools/export.mjs` 会生成一个独立目录（默认 `../Stronghold-Protocol-Cloudflare`），里面有面向使用者的 `README.md`、`VERSION`（记录验证过的上游版本与提交）、`LICENSE`/`NOTICE.md`，以及可直接拷入任意 Stronghold-Protocol 检出的 `cloudflare/`（不含依赖与构建产物，共 20 余个文件）。仓库 [`Stronghold-Protocol_cf_worker`](https://github.com/xiaomasama/Stronghold-Protocol_cf_worker) 里已经带着 `cloudflare/`，这个独立包是给"不想 fork、只想拿适配层"的人准备的。
+
+**完整 Release（源码 + 素材）**：`node tools/release.mjs` 打一个"解压即可构建部署"的包 —— 本检出的全部源码 + 上游同版本 release 里的 `public/assets` / `public/fonts` / `data/local-assets.json`（按官方 sha256 校验后原样搬入，不重新压缩），产物是 `<名字>-v<版本>.zip` + `.sha256` + 可直接粘贴的 release notes。慢网络可用 `--from <已下好的上游包>` 离线出包；细节见 DEPLOY.md §13.7。
 
 兼容性：**原版 sganggs 0.2.1 / 0.2.2** 与 **fork xinhai-ai 0.2.0** 都实测通过 —— 构建会自动识别两者的差异：前者需要把 `server/sim/content` 里的计算型动态导入改写成字面量，后者源码本身就是字面量加载器（0 处改写）；前者由适配层注入公告横幅，后者自带的公告客户端接管显示且公告数据继续沿用其 `config/announcements.json`。
 0.2.2 的实测：构建通过（209 个干员 kit、361 个模块改写）、`smoke` 全过、真打一局走完 2 个回合的服务端模拟、浏览器过一遍标题页 / 大厅 / 新的统计页。0.2.2 带来的两处适配层改动：构建标记（build tag）的输入扩到 `server/sim` + `shared` + `data`（上游 0.2.2 的 `buildTag.js` 同样这么做了，否则只改模拟代码的部署不会让已打开的页面刷新），以及公告横幅不再吃掉游戏顶栏控件的点击（0.2.2 新增的「统计」按钮正好落在横幅那一条上）。
