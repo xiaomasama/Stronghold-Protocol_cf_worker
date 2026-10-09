@@ -180,8 +180,8 @@
   const style = document.createElement('style');
   style.textContent = [
     // fixed pixel sizes on purpose: the game UI scales with the viewport, our overlay must not.
-    // bottom:46px leaves the game's own bottom-left toolbar (⚙ / 图鉴 / 全屏) free — this strip is the only room
-    // the in-match HUD leaves, and the readout is narrow on purpose.
+    // `bottom` here is only the fallback: placeAboveToolbar() measures the game's own bottom-left toolbar
+    // (the 交流 button and friends) and parks the widget just above it, so the chip can never shave its top edge.
     '#sp-dmg{position:fixed;left:10px;bottom:46px;z-index:2147482500;display:none;flex-direction:column;align-items:flex-start;',
     'gap:5px;font:500 12px/1.35 system-ui,"Noto Sans SC",sans-serif;color:#cfe0d8;pointer-events:none}',
     '#sp-dmg.sp-in-match{display:flex}',
@@ -347,12 +347,31 @@
   const wheelOpen = () => !!document.querySelector('.ewheel__panel');
 
   /**
+   * Park the widget just above the game's own bottom-left toolbar (交流 / ⚙ / 图鉴 / 全屏). The toolbar's place
+   * moves with the viewport scale, rotation and safe areas, so it is measured instead of assumed — a fixed
+   * `bottom` shaved the 交流 button's top edge by a few pixels on a 1280×720 viewport.
+   */
+  const placeAboveToolbar = () => {
+    let bottom = 46;                                   // the toolbar is not on screen yet (or a menu screen): keep clear of it
+    const btn = document.querySelector('.ewheel__btn') || document.querySelector('.ewheel');
+    if (btn) {
+      const r = btn.getBoundingClientRect();
+      if (r.height > 0) bottom = Math.max(bottom, Math.round(window.innerHeight - r.top + 8));
+    }
+    if (root.dataset.spBottom !== String(bottom)) {
+      root.dataset.spBottom = String(bottom);
+      root.style.bottom = `${bottom}px`;
+    }
+  };
+
+  /**
    * Start/stop the refresh with the screen: the panel only exists in a match, the timer only while it is open and
    * nothing else claims the corner (the wheel).
    */
   const sync = () => {
     const inMatch = !!document.querySelector('.screen.gm');
     const away = wheelOpen();
+    placeAboveToolbar();
     root.classList.toggle('sp-in-match', inMatch);
     root.classList.toggle('sp-away', away);
     const shouldRun = inMatch && open && !away;
@@ -371,6 +390,7 @@
     }
   }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
   document.addEventListener('visibilitychange', sync);
+  window.addEventListener('resize', sync);
   paintOpen();
   sync();
 })();
