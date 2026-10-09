@@ -260,6 +260,9 @@
   const paintOpen = () => {
     root.classList.toggle('sp-open', open);
     caret.textContent = open ? '▾' : '▸';
+    // a tap must wake the refresh up too — sync() owns the interval (it is the only place that starts/stops it),
+    // and without this the readout stayed a single snapshot until the next screen change
+    sync();
     if (open) tick();
   };
   head.addEventListener('click', () => { open = !open; store.set(ON_KEY, open ? '1' : '0'); paintOpen(); });
@@ -273,6 +276,9 @@
   let last = null;                   // the last battle's numbers, kept on screen between battles as 「上一场」
   let lastKey = '';
   function tick() {
+    try { tickInner(); } catch (e) { if (!tick.warned) { tick.warned = true; console.warn('[sp-damage] refresh failed', e); } }
+  }
+  function tickInner() {
     const live = battle() ? readStats() : null;
     if (live) last = live;
     const st = live || last;
