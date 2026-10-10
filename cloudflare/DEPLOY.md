@@ -909,7 +909,51 @@ node tools/export.mjs D:\发布\sp-cloudflare   # 或指定目录
 > 已经有一个把两者合到一起的仓库：[`xiaomasama/Stronghold-Protocol_cf_worker`](https://github.com/xiaomasama/Stronghold-Protocol_cf_worker)（上游 + `cloudflare/`，见 §2 方式 A）。
 > 想把适配层更新推回那个仓库：`cd <该仓库>` → 把 `cloudflare/` 覆盖成最新 → `git add cloudflare && git commit && git push`（仓库里已有 `cloudflare/`，不需要 export 再拷）。
 
-### 13.7 彻底删除
+### 13.7 用 Workers Builds 从仓库自动构建部署（推荐长期用）
+
+Cloudflare 的 Git 集成（Workers Builds）可以把**已经存在的这个 Worker**接到 GitHub 仓库上：以后只要往仓库推提交，
+Cloudflare 自己构建并部署（生产分支 → 新版本上线；其他分支 → Preview）。目的是让"发布后每次更新"不再需要本地构建/部署。
+
+**前置：构建环境必须能自己拿到素材。** 游戏素材（`public/assets` ~350 MB、`public/fonts`、`data/local-assets.json`）**不在仓库里**
+（`.gitignore` 挡着——500 MB 游戏数据不该进 git），所以：
+
+- 公开镜像那部分 `node tools/setup.mjs` 能在构建环境里拉（约 270 MB，已存在的会跳过）；
+- **本机提取的官方美术**（`public/assets/local/`，约 74 MB，来自本机《明日方舟》客户端）**无法在 CI 复现**，三选一：
+  ① **提交进你自己的仓库**（推荐：一次性 74 MB，CI 构建出的站点与本地构建一致）；
+  ② 打成一个小 release asset，在构建命令里下载解开；
+  ③ 不处理 —— 那部分退化为占位图（3D 棋盘与少数官方 UI）。
+
+**设置（Dashboard → Workers & Pages → 选中 `stronghold-protocol` → Settings → Builds → Connect）**：
+
+| 字段 | 值 |
+|---|---|
+| 仓库 / 生产分支 | 你的 fork `xiaomasama/Stronghold-Protocol_cf_worker` / `master` |
+| **Root directory** | `cloudflare`（`wrangler.jsonc` 在这里；整个仓库仍会完整检出，所以构建脚本照旧能读 `../public`、`../server`）|
+| **Build command** | `node tools/ci-build.mjs` |
+| **Deploy command** | `npx wrangler deploy`（默认值即可）|
+| 构建变量（可选）| `NODE_VERSION=22`（镜像默认 Node 24，本项目 22/24 都行；想锁定就设它）|
+
+`cloudflare/tools/ci-build.mjs` 是本适配层提供的构建入口，四步：仓库根 `npm ci`（装游戏依赖，其 `postinstall` 会把
+PixiJS / three.js / Preact 拷进 `public/vendor/`，浏览器客户端要加载）→ `node tools/setup.mjs`（下素材）→ **体检**（`public/assets`
+为空就**直接失败**，绝不部署一个只剩占位图的站点；缺本机提取美术则明确告警）→ `node build.mjs`。已装依赖、已下素材会自动跳过，
+所以这条命令在本地也能直接跑。
+
+**还需要两件事**：
+
+- **KV 绑定必须写进仓库里的 `wrangler.jsonc`**（CI 的绑定只能来自配置文件）：把
+  `// "kv_namespaces": [{ "binding": "ANNOUNCE", "id": "<命名空间 id>" }]` 的注释去掉、填上你的 id（id 不是机密）。
+  `cloudflare/config/*.json` 不必提交——线上公告/服务器信息来自 KV。
+- **第一次 CI 部署前，先在本地对同样的内容 `npx wrangler deploy` 一次**：静态资源按内容哈希去重，这样 CI 的首次部署只上传
+  变化的文件，不会把 500 MB 重传一遍（也不至于逼近 20 分钟的构建上限）。
+
+**平台额度与限制**（免费版够用）：每月 3,000 构建分钟（本项目一次完整构建约 4–9 分钟：下素材 1–4 分钟 + 构建 1–2 分钟 +
+部署 1–3 分钟）、并发 1、单次构建上限 20 分钟、磁盘 20 GB、内存 8 GB。非生产分支会生成 Preview URL；本项目的服务端是
+Durable Object，Preview 对 DO 的支持官方文档没有明说，真要用之前拿一个分支先试一次。
+
+**回报与代价**：改代码只需 `git push`（云端构建 + 部署），本地不用再 `build`/`deploy`；代价是每次构建重下 270 MB 素材，
+以及"素材/本机提取美术有变化"时仍要走本地（重新提取后再提交，或更新那个 asset）。
+
+### 13.8 彻底删除
 
 ```powershell
 cd cloudflare

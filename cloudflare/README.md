@@ -76,6 +76,8 @@ node tools/match-drive.mjs http://127.0.0.1:8787 --seconds=120
 npx wrangler deploy               # 或 npm run deploy
 ```
 
+想以后**不用本地构建/部署**（推代码即上线）可以接 Cloudflare 的 Git 集成（Workers Builds）：设置见 DEPLOY.md §13.7，构建入口是 `cloudflare/tools/ci-build.mjs`。
+
 发布后 `https://<name>.<subdomain>.workers.dev` 就是游戏地址；也可以在 `wrangler.jsonc` 里加 `routes` 绑自己的域名。页面是 https，客户端会自动用 `wss://同一域名/ws`。
 
 ### 必须注意的两点
