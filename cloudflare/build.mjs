@@ -128,10 +128,13 @@ log(`关于本服务器: the checkout ${checkoutHasAbout ? 'ships its own dialog
     ['/sp-preload-link.js', true, ''],
     ['/sp-announce.js', !upstreamAnnounceClient, ''],
     ['/sp-tweaks.js', true, ` data-about-ui="${checkoutHasAbout ? 'checkout' : 'none'}"`],
-    ['/sp-damage.js', true, ''],   // the in-match damage panel (菜单外只在对局里出现，自带开关)
+    ['/sp-damage.js', true, ''],   // the in-match damage panel — delete public/sp-damage.js to drop the feature
   ];
   for (const [src, want, extra] of wanted) {
     if (!want || html.includes(src)) continue;
+    // a client extra whose file is not in public/ is simply left out: deleting the file is the off switch, and the
+    // served page never carries a script tag pointing at a 404
+    if (!existsSync(join(dist, src.slice(1)))) { log(`${src} is not in public/ — not injecting it (feature disabled)`); continue; }
     const tag = `<script src="${src}" defer${extra}></script>`;
     const at = html.lastIndexOf('</body>');
     html = at >= 0 ? `${html.slice(0, at)}  ${tag}\n${html.slice(at)}` : `${html}\n${tag}\n`;

@@ -797,6 +797,9 @@ npm run info:push                                       # 写入 KV（key: serve
 战斗结束到下一场开始之间保留「上一场」的数字。
 刷新间隔 250ms（与游戏自己的详情卡同频），收起时不跑任何定时器。
 
+**不想要这个面板**：删掉 `cloudflare/public/sp-damage.js` 即可 —— 构建会自动跳过它的注入（日志里会说一句
+`not injecting it (feature disabled)`），`tools/smoke.mjs` 也会跳过对应的两条自检；把文件放回来就恢复。
+
 ## 13. 日常运维
 
 ### 13.1 更新游戏版本（上游有新提交 / 新 Release）

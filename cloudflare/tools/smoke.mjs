@@ -252,10 +252,16 @@ console.log('\n[announce & preload]');
     upstreamClient ? 'announcements handled by the upstream client (no injection)' : 'the served index.html is wired to the announcement client');
   check(/sp-preload-link\.js/.test(page.body || ''), 'the served index.html carries the /preload entry (injected on every upstream)');
   check(/sp-tweaks\.js/.test(page.body || ''), 'the served index.html carries the landing-page tweaks');
-  const dmg = await get('/sp-damage.js');
-  check(dmg.status === 200 && dmg.type.includes('javascript') && /__SP_RUNNER__/.test(dmg.body || ''),
-    "GET /sp-damage.js → the in-match damage panel (reads the game's own battle runner)", `${dmg.status} ${dmg.type}`);
-  check(/sp-damage\.js/.test(page.body || ''), 'the served index.html is wired to the damage panel');
+  // The in-match damage panel is an optional client extra: deleting public/sp-damage.js drops it from the build,
+  // so the two checks below only run when the file is part of this checkout.
+  if (existsSync(join(repo, 'cloudflare', 'public', 'sp-damage.js'))) {
+    const dmg = await get('/sp-damage.js');
+    check(dmg.status === 200 && dmg.type.includes('javascript') && /__SP_RUNNER__/.test(dmg.body || ''),
+      "GET /sp-damage.js → the in-match damage panel (reads the game's own battle runner)", `${dmg.status} ${dmg.type}`);
+    check(/sp-damage\.js/.test(page.body || ''), 'the served index.html is wired to the damage panel');
+  } else {
+    ok('the in-match damage panel is not part of this build (cloudflare/public/sp-damage.js absent)');
+  }
   // The tweaks script needs to know whether the checkout ships a 「关于本服务器」 dialog of its own: build.mjs
   // probes the checkout and bakes the answer into the script tag (checkout → patch it, none → build our own).
   const aboutTag = /<script src="\/sp-tweaks\.js" defer data-about-ui="(checkout|none)"><\/script>/.exec(page.body || '');
