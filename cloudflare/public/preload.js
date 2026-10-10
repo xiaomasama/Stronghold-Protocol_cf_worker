@@ -21,6 +21,8 @@
     elapsed: el('elapsed'), speed: el('speed'), warnbox: el('warnbox'), missingBox: el('missingBox'),
     failbox: el('failbox'), faillist: el('faillist'), state: el('state'),
     chipState: el('chipState'), chipToggle: el('chipToggle'),
+    swState: el('swState'), swPurge: el('swPurge'), swPersist: el('swPersist'), swOff: el('swOff'), storageHint: el('storageHint'),
+    swMore: el('swMore'), storageAdvanced: el('storageAdvanced'),
   };
 
   /** @type {{ files: [string, number, string][], missing: string[] } | null} */
@@ -31,8 +33,39 @@
   const mib = (n) => `${(n / 1048576).toFixed(1)} MiB`;
   const fmt = (n) => n.toLocaleString('en-US');
 
-  /** Is `url` already in this browser's cache? (no network request at all) */
+  // ------------------------------------------------------------------ storage layer: Cache Storage when the worker is here
+  //
+  // /sp-sw.js registers the Service Worker and answers `sp-sw-info`; when that works this page reads and writes
+  // the worker's caches directly (`caches.open(name)`), which makes "skip what is already here" exact (a cache
+  // lookup, no probing) and "verify" a pure local read. Without a worker (unsupported browser, `?nosw=1`, the
+  // files deleted) everything falls back to the HTTP-cache behaviour it had before.
+
+  /** @type {Promise<{ assets: Cache, data: Cache, info: any } | null> | null} */
+  let cachePromise = null;
+  /** @returns {Promise<{ assets: Cache, data: Cache, info: any } | null>} */
+  const swCaches = () => {
+    if (cachePromise) return cachePromise;
+    cachePromise = (async () => {
+      try {
+        const sw = globalThis.__SP_SW__;
+        if (!sw || typeof globalThis.caches?.open !== 'function') return null;
+        const info = await sw.info();
+        if (!info || !info.ok) return null;
+        return { assets: await caches.open(info.assets), data: await caches.open(info.data), info };
+      } catch { return null; }
+    })();
+    return cachePromise;
+  };
+  const DATA_URL = /^\/(data|i18n)\//;
+  /** Assets and data live in separate caches (the data one is dropped whenever the build changes). */
+  const cacheFor = (c, url) => (DATA_URL.test(new URL(url, location.href).pathname) ? c.data : c.assets);
+
+  /** Is `url` already stored? (Cache Storage: exact; without it the only-if-cached HTTP probe) */
   async function cached(url) {
+    const c = await swCaches();
+    if (c) {
+      try { return !!(await cacheFor(c, url).match(url)); } catch { /* fall through to the probe */ }
+    }
     if (canProbe === false) return false;
     try {
       const res = await fetch(url, { cache: 'only-if-cached', mode: 'same-origin' });
@@ -119,16 +152,37 @@
 
   /** One queue item: [url, size, sha256] */
   async function work([url, size, hash]) {
+    const c = await swCaches();
     if (state.mode === 'verify') {
-      // Verification reads the bytes: fetch with `default` (a stale entry is revalidated, a missing one downloaded)
-      // and judge what came back — that is the thing the game will get.
-      let buf;
-      try {
-        const res = await fetch(url, { cache: 'default' });
-        if (!res.ok) { state.failed.push({ url, why: `HTTP ${res.status}` }); return; }
-        buf = await res.arrayBuffer();
-      } catch (e) { state.failed.push({ url, why: String((e && e.message) || e) }); return; }
-      if (fromCache(url)) state.skipped++; else state.done++;
+      // Verification judges the bytes the game would get. With Cache Storage that is a local read — no network at
+      // all when the file is stored; only a missing one is fetched (and stored while we are at it).
+      let buf = null;
+      if (c) {
+        try {
+          const hit = await cacheFor(c, url).match(url);
+          if (hit) buf = await hit.arrayBuffer();
+        } catch { buf = null; }
+        if (buf) state.skipped += 1;
+        if (!buf) {
+          try {
+            const res = await fetch(url, { cache: 'no-store' });
+            if (!res.ok) { state.failed.push({ url, why: `HTTP ${res.status}` }); return; }
+            const copy = res.clone();
+            buf = await res.arrayBuffer();
+            state.done += 1;
+            cacheFor(c, url).put(url, copy).catch(() => {});
+          } catch (e) { state.failed.push({ url, why: String((e && e.message) || e) }); return; }
+        }
+      } else {
+        // No worker: fetch with `default` (a stale entry is revalidated, a missing one downloaded) and judge what
+        // came back — that is the thing the game will get.
+        try {
+          const res = await fetch(url, { cache: 'default' });
+          if (!res.ok) { state.failed.push({ url, why: `HTTP ${res.status}` }); return; }
+          buf = await res.arrayBuffer();
+        } catch (e) { state.failed.push({ url, why: String((e && e.message) || e) }); return; }
+        if (fromCache(url)) state.skipped += 1; else state.done += 1;
+      }
       if (buf.byteLength !== size) { state.failed.push({ url, why: `长度不符 ${buf.byteLength}≠${size}` }); return; }
       if (hash && crypto.subtle) {
         state.hashing = true;
@@ -136,17 +190,25 @@
         try { got = await sha256(buf); } catch { got = null; }
         if (got && got !== hash) { state.failed.push({ url, why: '哈希不符' }); return; }
       }
-      state.passed++;
+      state.passed += 1;
       return;
     }
-    // Fast path: a *fresh* cached entry is skipped without any request at all.
-    if (await cached(url)) { state.skipped++; return; }
+    // Preload — Cache Storage: an exact lookup decides; a miss downloads once and stores.
+    // No Cache Storage: a *fresh* HTTP entry is skipped without any request at all.
+    if (await cached(url)) { state.skipped += 1; return; }
     try {
-      const res = await fetch(url, { cache: 'default' });
+      // `no-store` when we have somewhere of our own to put it: that keeps a 650 MB asset set out of the HTTP
+      // cache (the two would otherwise hold two copies of everything).
+      const res = await fetch(url, { cache: c ? 'no-store' : 'default' });
       if (!res.ok) { state.failed.push({ url, why: `HTTP ${res.status}` }); return; }
-      await res.arrayBuffer();  // drain: some browsers only commit the cache entry once the body is consumed
-      // A stale-but-cached entry was revalidated (304, nothing transferred) rather than downloaded.
-      if (fromCache(url)) state.skipped++; else state.done++;
+      if (c) {
+        await cacheFor(c, url).put(url, res);   // put consumes the body: the entry is complete when it resolves
+        state.done += 1;
+      } else {
+        await res.arrayBuffer();                // drain: some browsers only commit the cache entry once consumed
+        // A stale-but-cached entry was revalidated (304, nothing transferred) rather than downloaded.
+        if (fromCache(url)) state.skipped += 1; else state.done += 1;
+      }
     } catch (e) {
       state.failed.push({ url, why: String((e && e.message) || e) });
     }
@@ -162,6 +224,18 @@
       try { localStorage.setItem('sp.pre.active', String(Date.now())); } catch { /* private mode */ }
       try { await work(item); } catch (e) { state.failed.push({ url: item[0], why: String((e && e.message) || e) }); }
       render();
+    }
+  }
+
+  /**
+   * A failed url may be sitting in the cache with the wrong bytes (server file changed, or a truncated download
+   * from an older run): drop the entry so the retry really re-fetches instead of "skipping" it again.
+   */
+  async function evictCached(urls) {
+    const c = await swCaches();
+    if (!c) return;
+    for (const url of urls) {
+      try { await cacheFor(c, url).delete(url); } catch { /* ignore */ }
     }
   }
 
@@ -187,7 +261,8 @@
     state.queue = null;
     try { localStorage.removeItem('sp.pre.active'); localStorage.removeItem('sp.bg.on'); } catch { /* private mode */ }
     const secs = ((performance.now() - state.startedAt) / 1000).toFixed(1);
-    const tail = `（${fmt(state.skipped)} 个未发请求直接跳过，${fmt(state.done)} 个已获取，用时 ${secs}s）`;
+    const engine = (await swCaches()) ? 'Cache Storage' : 'HTTP 缓存';
+    const tail = `（用时 ${secs}s，存储引擎：${engine}）`;
     // Tell the landing page's chip (public/sp-preload-link.js) that this browser is warmed up.
     if (!state.failed.length) { try { localStorage.setItem('sp.preload.ok', String(manifest.app || '1')); } catch { /* private mode */ } }
     if (mode === 'verify') {
@@ -203,6 +278,7 @@
         : `预载结束：跳过 ${fmt(state.skipped)}，已获取 ${fmt(state.done)}，失败 ${fmt(state.failed.length)}（见下方列表）${tail}。`);
     }
     render();
+    refreshStorage();
   }
 
   async function load() {
@@ -243,12 +319,15 @@
     setResult('busy', `清单就绪：${fmt(manifest.files.length)} 个文件 / ${mib(manifest.bytes)}${manifest.app ? `（对应服务器 ${manifest.app}）` : ''}。点击「开始预载」或「校验资源」。`);
     document.title = '资源预载';
     render();
+    refreshStorage();   // the sizes in the panel come from the manifest: refresh once it is here
   }
 
   ui.go.addEventListener('click', () => { state.queue = null; run('preload'); });
   ui.verify.addEventListener('click', () => { state.queue = null; run('verify'); });
   ui.stop.addEventListener('click', () => { state.running = false; });
-  ui.retry.addEventListener('click', () => {
+  ui.retry.addEventListener('click', async () => {
+    // A mismatch is an entry with the wrong bytes: drop it, or the retry would "skip" it again.
+    await evictCached(state.failed.map((f) => f.url));
     state.queue = state.failed.map((f) => {
       const hit = manifest.files.find((x) => x[0] === f.url);
       return hit || [f.url, 0, null];
@@ -274,6 +353,65 @@
     renderChipToggle();
   });
   renderChipToggle();
+
+  // ---- storage & Service Worker panel: where the bytes actually live, and the switches to manage it
+  async function refreshStorage() {
+    const c = await swCaches();
+    let quota = null, persisted = null;
+    try { quota = await navigator.storage?.estimate?.(); } catch { /* not exposed */ }
+    try { persisted = await navigator.storage?.persisted?.(); } catch { /* not exposed */ }
+    let entries = 0, bytes = 0;
+    if (c) {
+      const sizes = new Map((manifest?.files ?? []).map((f) => [f[0], f[1] || 0]));
+      for (const cache of [c.assets, c.data]) {
+        let keys = [];
+        try { keys = await cache.keys(); } catch { /* ignore */ }
+        for (const req of keys) {
+          entries += 1;
+          bytes += sizes.get(new URL(req.url).pathname) || 0;
+        }
+      }
+    }
+    ui.swState.textContent = c ? '· 存储引擎：Cache Storage（Service Worker 接管）' : '· 存储引擎：HTTP 缓存（没有 Service Worker）';
+    ui.swState.className = c ? 'on' : 'off';
+    const bits = [];
+    if (c) bits.push(`已缓存 ${fmt(entries)} 个文件（约 ${mib(bytes)}）`);
+    if (quota && quota.quota) bits.push(`站点存储已用 ${mib(quota.usage || 0)} / 配额 ${mib(quota.quota)}（${Math.round(((quota.usage || 0) / quota.quota) * 100)}%）`);
+    if (persisted !== null) bits.push(persisted ? '已获持久化存储，不会被浏览器自动清理' : '未获持久化存储（在「高级操作」里可申请；安装到桌面后通常自动获得）');
+    if (c && c.info && c.info.stats) bits.push(`worker 计数（游戏页流量；预载走 no-store 不计入）：命中 ${c.info.stats.hits} / 回源 ${c.info.stats.misses} / 入库 ${c.info.stats.stored}（build ${c.info.build}）`);
+    if (!c) bits.push('用 /?nosw=1 关闭过，或浏览器不支持 Service Worker；用 /?nosw=0 恢复');
+    ui.storageHint.textContent = bits.join('；') || '…';
+  }
+  // The panel is a status readout by default; the maintenance actions live behind this fold.
+  ui.swMore.addEventListener('click', () => {
+    const open = ui.storageAdvanced.hidden;
+    ui.storageAdvanced.hidden = !open;
+    ui.swMore.setAttribute('aria-expanded', String(open));
+    ui.swMore.textContent = open ? '高级操作 ▾' : '高级操作 ▸';
+  });
+  ui.swPurge.addEventListener('click', async () => {
+    try {
+      const sw = globalThis.__SP_SW__;
+      if (sw) await sw.purge();
+      else { for (const n of (await caches.keys()).filter((x) => x.startsWith('sp-'))) await caches.delete(n); }
+    } catch { /* ignore */ }
+    try { localStorage.removeItem('sp.preload.ok'); } catch { /* private mode */ }   // a wiped cache is not "preloaded"
+    cachePromise = null;
+    await refreshStorage();
+  });
+  ui.swPersist.addEventListener('click', async () => {
+    try { await navigator.storage?.persist?.(); } catch { /* not exposed */ }
+    await refreshStorage();
+  });
+  ui.swOff.addEventListener('click', async () => {
+    // The full escape hatch, same as /?nosw=1: unregister, drop the caches, remember it for this tab.
+    try { sessionStorage.setItem('sp.sw.off', '1'); } catch { /* private mode */ }
+    try { for (const reg of await navigator.serviceWorker.getRegistrations()) await reg.unregister(); } catch { /* ignore */ }
+    try { for (const n of (await caches.keys()).filter((x) => x.startsWith('sp-'))) await caches.delete(n); } catch { /* ignore */ }
+    cachePromise = null;
+    await refreshStorage();
+  });
+  refreshStorage();
 
   load().then(detectProbe);
 })();

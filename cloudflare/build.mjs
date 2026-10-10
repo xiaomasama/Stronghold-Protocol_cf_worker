@@ -91,6 +91,23 @@ writeFileSync(join(dist, 'data.js'), DATA_SHIM_JS);
 // The adapter's own client-side additions (never the repository's): the announcement banner and the resource
 // preload page. `sp-announce.js` is injected into dist/index.html below — the only change to the served page.
 cpSync(join(here, 'public'), dist, { recursive: true });
+// dist/sw.js — public/sw.js with the release identity baked in: the cache names key off these two, and a deploy
+// that changes them ships different bytes → the browser installs the update → stale caches are purged (activate).
+{
+  const swPath = join(dist, 'sw.js');
+  if (existsSync(swPath)) {
+    const app = (() => { try { return /APP_VERSION = '([^']+)'/.exec(readFileSync(join(repo, 'shared', 'constants.js'), 'utf8'))?.[1] ?? '0'; } catch { return '0'; } })();
+    const build = computeBuildTag(repo) ?? Date.now().toString(36);
+    const baked = readFileSync(swPath, 'utf8')
+      .replace("const APP = '__SP_APP__';", `const APP = '${app}';`)       // only the constants, never the header comment
+      .replace("const BUILD = '__SP_BUILD__';", `const BUILD = '${build}';`);
+    if (baked.includes("'__SP_APP__'") || baked.includes("'__SP_BUILD__'")) throw new Error('sw.js constants were not substituted');
+    writeFileSync(swPath, baked);
+    log(`sw.js: baked — assets cache sp-assets-v${app}, data cache sp-data-${build}`);
+  } else {
+    log('sw.js: not in public/ — the Service Worker cache layer is off (pages fall back to the HTTP cache)');
+  }
+}
 // A fork that already ships its own announcement client (public/js/ui/announcement.js, e.g. xinhai-ai) renders the
 // notices itself and polls the same /api/announcement endpoints — injecting a second banner would double it up.
 const upstreamAnnounceClient = existsSync(join(repo, 'public', 'js', 'ui', 'announcement.js'));
@@ -129,6 +146,7 @@ log(`关于本服务器: the checkout ${checkoutHasAbout ? 'ships its own dialog
     ['/sp-announce.js', !upstreamAnnounceClient, ''],
     ['/sp-tweaks.js', true, ` data-about-ui="${checkoutHasAbout ? 'checkout' : 'none'}"`],
     ['/sp-damage.js', true, ''],   // the in-match damage panel — delete public/sp-damage.js to drop the feature
+    ['/sp-sw.js', true, ''],       // registers the Service Worker (public/sw.js → /sw.js)
   ];
   for (const [src, want, extra] of wanted) {
     if (!want || html.includes(src)) continue;
@@ -168,6 +186,11 @@ if (!localArtGroups) writeFileSync(localArt, JSON.stringify({ version: 1, source
 writeFileSync(join(dist, '_headers'), [
   '# mirrors server/index.js cacheControlFor (LONG_CACHE_DIRS = assets, fonts, vendor)',
   ...LONG_CACHE_DIRS.flatMap((dirName) => [`/${dirName}/*`, '  Cache-Control: public, max-age=86400', '']),
+  // the Service Worker script must be revalidated on every check, or a deploy could never replace it
+  '/sw.js',
+  '  Cache-Control: no-cache',
+  '  Service-Worker-Allowed: /',
+  '',
 ].join('\n'));
 
 // ------------------------------------------------------------------------------------------------

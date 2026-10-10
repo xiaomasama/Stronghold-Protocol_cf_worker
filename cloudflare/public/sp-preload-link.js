@@ -220,7 +220,31 @@
     return manifest;
   }
 
+  // Cache Storage (the Service Worker's caches) when it is available: an exact lookup decides what to skip, and
+  // every download lands there — that is what makes the background pass stick. The HTTP cache would evict a
+  // 600 MB+ asset set (measured), while Cache Storage is page-owned and quota-backed.
+  let cachePromise = null;
+  const swCaches = () => {
+    if (cachePromise) return cachePromise;
+    cachePromise = (async () => {
+      try {
+        const sw = globalThis.__SP_SW__;
+        if (!sw || typeof globalThis.caches?.open !== 'function') return null;
+        const info = await sw.info();
+        if (!info || !info.ok) return null;
+        return { assets: await caches.open(info.assets), data: await caches.open(info.data) };
+      } catch { return null; }
+    })();
+    return cachePromise;
+  };
+  const DATA_URL = /^\/(data|i18n)\//;
+  const cacheFor = (c, url) => (DATA_URL.test(new URL(url, location.href).pathname) ? c.data : c.assets);
+
   async function cached(url) {
+    const c = await swCaches();
+    if (c) {
+      try { return !!(await cacheFor(c, url).match(url)); } catch { /* fall through to the probe */ }
+    }
     try {
       const res = await fetch(url, { cache: 'only-if-cached', mode: 'same-origin' });
       return !!res;
@@ -234,11 +258,14 @@
       if (!item) return;
       const [url] = item;
       try {
+        const c = await swCaches();
         if (await cached(url)) { /* already here: nothing transferred */ }
         else {
-          const res = await fetch(url, { cache: 'default' });
+          // `no-store` when we have a cache of our own: one copy on disk, not two (Cache Storage + HTTP cache)
+          const res = await fetch(url, { cache: c ? 'no-store' : 'default' });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          await res.arrayBuffer();
+          if (c) await cacheFor(c, url).put(url, res);   // put consumes the body: complete when it resolves
+          else await res.arrayBuffer();
         }
       } catch (e) {
         const failed = readJson('sp.bg.failed', []);
@@ -286,6 +313,9 @@
     if (running) { stopping = true; running = false; store.del('sp.bg.on'); render(); return; }
     stopping = false;
     store.set('sp.bg.on', '1');
+    // A user gesture is the moment to ask for persistent storage: otherwise the browser may drop the cache under
+    // pressure, and the whole background pass would have been for nothing.
+    try { navigator.storage?.persist?.().catch(() => {}); } catch { /* not exposed */ }
     run();
   });
 

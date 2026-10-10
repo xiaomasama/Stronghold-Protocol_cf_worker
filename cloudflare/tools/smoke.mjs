@@ -264,6 +264,16 @@ console.log('\n[announce & preload]');
   }
   // The tweaks script needs to know whether the checkout ships a 「关于本服务器」 dialog of its own: build.mjs
   // probes the checkout and bakes the answer into the script tag (checkout → patch it, none → build our own).
+  const sw = await get('/sw.js');
+  const swOk = sw.status === 200 && sw.type.includes('javascript')
+    && /const APP = '[^']+';/.test(sw.body || '') && /const BUILD = '[^']+';/.test(sw.body || '')
+    && !/'__SP_(APP|BUILD)__'/.test(sw.body || '');       // the constants are baked (the header comment may name them)
+  check(swOk, 'GET /sw.js → the Service Worker with baked cache names', `${sw.status} ${sw.type}`);
+  check((sw.cache || '').includes('no-cache'), 'sw.js is served no-cache (updates can land)', sw.cache || '(none)');
+  const spSw = await get('/sp-sw.js');
+  check(spSw.status === 200 && spSw.type.includes('javascript') && /__SP_SW__/.test(spSw.body || ''),
+    'GET /sp-sw.js → the Service Worker registration client', `${spSw.status} ${spSw.type}`);
+  check(/sp-sw\.js/.test(page.body || ''), 'the served index.html registers the Service Worker');
   const aboutTag = /<script src="\/sp-tweaks\.js" defer data-about-ui="(checkout|none)"><\/script>/.exec(page.body || '');
   check(!!aboutTag, 'the tweaks script declares which upstream it runs on (data-about-ui)',
     aboutTag ? `data-about-ui="${aboutTag[1]}"` : 'missing — stale dist? run npm run build');

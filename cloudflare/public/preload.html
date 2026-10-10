@@ -50,12 +50,20 @@
     .chiptoggle .on { color: #4ed8af; }
     .chiptoggle .off { color: #f6a329; }
     .chiptoggle .hint { display: block; margin-top: 8px; color: #7f8f88; font-size: 12.5px; }
+    /* the maintenance actions stay folded away: the panel is a status readout, not a control board */
+    #advancedHead { margin-top: 10px; }
+    #advancedHead button { margin-left: 0; font-size: 12.5px; color: #9fb4ac; }
+    #advancedHead button[aria-expanded="true"] { color: #eafaf4; }
+    #storageAdvanced { margin-top: 8px; }
+    .adv-row { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: baseline; margin-top: 8px; }
+    .adv-row button { margin-left: 0; white-space: nowrap; }
+    .adv-row span { color: #7f8f88; font-size: 12.5px; }
   </style>
 </head>
 <body>
   <main>
     <h1>资源预载 / 校验</h1>
-    <p class="sub">把游戏素材预先下载进浏览器缓存（立绘 / Spine / 音频 / 数据 / 语言包 / 本地提取的官方素材）。
+    <p class="sub">把游戏素材预先下载进浏览器的 Cache Storage（装了 Service Worker 时，配额大、不会被随手淘汰；没有则退回 HTTP 缓存）——立绘 / Spine / 音频 / 数据 / 语言包 / 本地提取的官方素材。
       <b>开始预载</b>会先探测缓存，已在本机的文件直接跳过；<b>校验资源</b>会逐个核对大小与 SHA-256，
       确认缓存里的确实是服务器上的那份。清单由服务器在构建时生成，含每个文件的字节数与哈希。</p>
 
@@ -98,11 +106,35 @@
       <span class="hint">游戏首页左下角的「资源预载」入口。隐藏之后它不再出现，<b>后台续传也会停止</b>（正在进行的这一轮不受影响）；随时可以在这里恢复。</span>
     </div>
 
+    <div class="chiptoggle" id="storagePanel">
+      <b>存储与缓存</b>
+      <span id="swState">…</span>
+      <span class="hint" id="storageHint">…</span>
+      <div id="advancedHead">
+        <button id="swMore" type="button" aria-expanded="false" aria-controls="storageAdvanced">高级操作 ▸</button>
+      </div>
+      <div id="storageAdvanced" hidden>
+        <div class="adv-row">
+          <button id="swPersist" type="button">申请持久化存储</button>
+          <span>让浏览器不自动清理本站缓存（磁盘紧张时它可能整站丢弃）。面板显示「未获持久化存储」时才需要点；把游戏「添加到桌面」通常会自动获得。不影响配额大小。</span>
+        </div>
+        <div class="adv-row">
+          <button id="swPurge" type="button">清空资源缓存</button>
+          <span>删掉已缓存的素材（下次预载会重新下载）。用于「想重下一遍」或怀疑缓存里有坏文件；Service Worker 保持注册。</span>
+        </div>
+        <div class="adv-row">
+          <button id="swOff" type="button">关闭 Service Worker</button>
+          <span>注销缓存层并清空缓存（等价于访问 <code>/?nosw=1</code>，只对当前标签生效）。之后回到「只用 HTTP 缓存」的旧行为；访问 <code>/?nosw=0</code> 或新开标签即可恢复。</span>
+        </div>
+      </div>
+    </div>
+
     <div class="foot">
       <span id="state">正在读取清单…</span>
       <a href="/">← 返回游戏</a>
     </div>
   </main>
+  <script src="/sp-sw.js"></script>
   <script src="/preload.js"></script>
 </body>
 </html>
