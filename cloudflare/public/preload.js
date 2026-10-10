@@ -20,6 +20,7 @@
     skipped: el('skipped'), done: el('done'), passed: el('passed'), failed: el('failed'),
     elapsed: el('elapsed'), speed: el('speed'), warnbox: el('warnbox'), missingBox: el('missingBox'),
     failbox: el('failbox'), faillist: el('faillist'), state: el('state'),
+    chipState: el('chipState'), chipToggle: el('chipToggle'),
   };
 
   /** @type {{ files: [string, number, string][], missing: string[] } | null} */
@@ -255,6 +256,24 @@
     run(state.mode === 'verify' ? 'verify' : 'preload');
   });
   ui.list.addEventListener('click', () => { load(); });
+
+  // ---- the landing-page「资源预载」chip: /preload is also where a hidden one comes back
+  const KEY_CHIP_HIDDEN = 'sp.preload.seen';   // the same localStorage key the chip writes when hidden
+  const renderChipToggle = () => {
+    let hidden = false;
+    try { hidden = localStorage.getItem(KEY_CHIP_HIDDEN) === '1'; } catch { /* private mode */ }
+    ui.chipState.textContent = hidden ? '· 当前：已隐藏（首页不显示入口）' : '· 当前：显示';
+    ui.chipState.className = hidden ? 'off' : 'on';
+    ui.chipToggle.textContent = hidden ? '在首页恢复挂件' : '隐藏首页挂件';
+  };
+  ui.chipToggle.addEventListener('click', () => {
+    try {
+      if (localStorage.getItem(KEY_CHIP_HIDDEN) === '1') localStorage.removeItem(KEY_CHIP_HIDDEN);
+      else localStorage.setItem(KEY_CHIP_HIDDEN, '1');
+    } catch { /* private mode */ }
+    renderChipToggle();
+  });
+  renderChipToggle();
 
   load().then(detectProbe);
 })();

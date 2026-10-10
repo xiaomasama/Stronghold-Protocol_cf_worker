@@ -154,9 +154,24 @@
   toggle.type = 'button';
   const close = document.createElement('button');
   close.type = 'button';
+  const CLOSE_HINT = '隐藏首页入口（可在 /preload 页恢复）';
   close.textContent = '×';
-  close.title = '不再显示';
-  close.addEventListener('click', () => { store.set(KEY_DISMISS, '1'); chip.remove(); });
+  close.title = `两步确认：${CLOSE_HINT}`;
+  // 两步确认：误点一下不再等于永久失去后台下载的入口；隐藏后 /preload 页随时可以把它恢复
+  let closeArmedAt = 0;
+  const disarm = () => { close.textContent = '×'; close.title = `两步确认：${CLOSE_HINT}`; };
+  close.addEventListener('click', () => {
+    const now = Date.now();
+    if (now - closeArmedAt > 3000) {
+      closeArmedAt = now;
+      close.textContent = '隐藏?';
+      close.title = `再点一次确认隐藏；${CLOSE_HINT}`;
+      setTimeout(() => { if (Date.now() - closeArmedAt >= 3000) disarm(); }, 3200);
+      return;
+    }
+    store.set(KEY_DISMISS, '1');
+    chip.remove();
+  });
   chip.append(dot, link, state, bar, toggle, close);
 
   const attach = () => { const stack = chipStack(); if (stack) stack.appendChild(chip); };

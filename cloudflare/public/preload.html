@@ -44,6 +44,12 @@
     a { color: #4ed8af; }
     .done { color: #4ed8af; font-weight: 600; }
     #missingBox { display: none; }
+    .chiptoggle { margin-top: 18px; padding: 12px 14px; border: 1px solid #22302b; border-radius: 8px; }
+    .chiptoggle b { margin-right: 10px; }
+    .chiptoggle button { margin-left: 10px; }
+    .chiptoggle .on { color: #4ed8af; }
+    .chiptoggle .off { color: #f6a329; }
+    .chiptoggle .hint { display: block; margin-top: 8px; color: #7f8f88; font-size: 12.5px; }
   </style>
 </head>
 <body>
@@ -83,6 +89,13 @@
     <div class="fail" id="failbox" hidden>
       <b>失败 / 不符的文件</b>（<code>404</code> = 服务器还没有这个素材，可用 <code>node tools/setup.mjs</code> 补齐后重新构建再试）：
       <ul id="faillist"></ul>
+    </div>
+
+    <div class="chiptoggle">
+      <b>首页挂件</b>
+      <span id="chipState">…</span>
+      <button id="chipToggle" type="button">…</button>
+      <span class="hint">游戏首页左下角的「资源预载」入口。隐藏之后它不再出现，<b>后台续传也会停止</b>（正在进行的这一轮不受影响）；随时可以在这里恢复。</span>
     </div>
 
     <div class="foot">
