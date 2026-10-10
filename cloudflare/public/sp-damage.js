@@ -351,6 +351,11 @@
 
   /** The 交流 wheel's panel is rendered right above its button — i.e. exactly over this widget's corner. */
   const wheelOpen = () => !!document.querySelector('.ewheel__panel');
+  /** The full-screen portrait rotate hint (0.2.3) sits below this widget in z-order: stand down for it too. */
+  const rotateHintOn = () => {
+    const el = document.querySelector('.rotate-hint');
+    return !!el && getComputedStyle(el).display !== 'none';
+  };
 
   /**
    * Park the widget just above the game's own bottom-left toolbar (交流 / ⚙ / 图鉴 / 全屏). The toolbar's place
@@ -376,7 +381,7 @@
    */
   const sync = () => {
     const inMatch = !!document.querySelector('.screen.gm');
-    const away = wheelOpen();
+    const away = wheelOpen() || rotateHintOn();
     placeAboveToolbar();
     root.classList.toggle('sp-in-match', inMatch);
     root.classList.toggle('sp-away', away);
@@ -397,6 +402,9 @@
   }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
   document.addEventListener('visibilitychange', sync);
   window.addEventListener('resize', sync);
+  // the rotate hint and `sp-rotatable` (a class device.js toggles on <html>) sit outside the body subtree
+  try { window.matchMedia('(orientation: portrait)').addEventListener('change', sync); } catch { /* older browser */ }
+  new MutationObserver(() => sync()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   paintOpen();
   sync();
 })();

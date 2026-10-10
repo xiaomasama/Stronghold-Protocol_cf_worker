@@ -36,6 +36,7 @@
       // 公告 / 关于本服务器 只属于最初始的标题页；资源预载在局内隐藏（大厅、房间仍然可用）
       '#sp-chips.sp-off-title #sp-ann-chip,#sp-chips.sp-off-title #sp-about{display:none !important}',
       '#sp-chips.sp-in-game #sp-preload{display:none !important}',
+      '#sp-chips.sp-away{display:none !important}',   // 全屏旋转提示（0.2.3 的竖屏遮罩）显示期间整列让开
     ].join('');
     document.head.appendChild(css);
     stack = document.createElement('div');
@@ -50,9 +51,35 @@
     const isScreenNode = (n) => n.nodeType === 1 && n.classList && n.classList.contains('screen');
     const carriesScreen = (n) => n.nodeType === 1 && (isScreenNode(n) || !!n.querySelector('.screen'));
     const MENUS = '.screen.title-screen, .screen.lobby-screen, .screen.room-screen';
+    /** 0.2.3 在标题页底栏（.title-foot，左下角）加了「添加到桌面」按钮：整列挂件停在那一行上方 —— 实测它的
+     *  顶边而不是写死数值，视图缩放 / 换语言 / 出现「继续对局」按钮都会自动跟上。 */
+    const placeAboveFooter = () => {
+      let bottom = 40;                                    // CSS 里的兜底值
+      const foot = document.querySelector('.title-foot');
+      if (foot) {
+        const r = foot.getBoundingClientRect();
+        if (r.height > 0 && r.bottom > 0) bottom = Math.max(bottom, Math.round(window.innerHeight - r.top + 8));
+      }
+      if (stack.dataset.spBottom !== String(bottom)) { stack.dataset.spBottom = String(bottom); stack.style.bottom = bottom + 'px'; }
+    };
+    /** 手机竖屏时游戏会盖一层全屏「请将设备横屏」遮罩（z-index 100，在本挂件之下）：它显示期间整列让开。 */
+    const rotateHintOn = () => {
+      const el = document.querySelector('.rotate-hint');
+      return !!el && getComputedStyle(el).display !== 'none';
+    };
+    /** 底栏自身尺寸变化（换语言、出现「继续对局」）也要重测。 */
+    let footObs = null;
+    const watchFooter = () => {
+      const foot = document.querySelector('.title-foot');
+      if (!foot) { if (footObs) { footObs.disconnect(); footObs = null; } return; }
+      if (!footObs && typeof ResizeObserver === 'function') { footObs = new ResizeObserver(() => placeAboveFooter()); footObs.observe(foot); }
+    };
     const sync = () => {
       stack.classList.toggle('sp-in-game', !document.querySelector(MENUS));                     // 资源预载：局内隐藏
       stack.classList.toggle('sp-off-title', !document.querySelector('.screen.title-screen'));  // 公告 / 关于本服务器：仅标题页
+      stack.classList.toggle('sp-away', rotateHintOn());                                        // 竖屏旋转提示期间整列让开
+      watchFooter();
+      placeAboveFooter();
     };
     new MutationObserver((records) => {
       for (const r of records) {
@@ -62,6 +89,11 @@
       }
     }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
     document.addEventListener('visibilitychange', sync);
+    window.addEventListener('resize', sync);
+    // the rotate hint reacts to the orientation media query and to `sp-rotatable`, a class device.js toggles on
+    // <html> — outside the observer's body subtree, so both get their own trigger
+    try { window.matchMedia('(orientation: portrait)').addEventListener('change', sync); } catch { /* older browser */ }
+    new MutationObserver(() => sync()).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     sync();
     return stack;
   };
