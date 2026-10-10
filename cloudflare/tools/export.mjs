@@ -22,7 +22,9 @@ const target = process.argv[2] ? resolve(process.argv[2]) : join(repo, '..', 'St
 /** Everything the adapter is made of (relative to cloudflare/). */
 const ITEMS = ['.gitignore', 'README.md', 'DEPLOY.md', 'build.mjs', 'wrangler.jsonc', 'package.json', 'package-lock.json', 'src', 'public', 'tools', 'config'];
 /** Build products and local state that must not ship. */
-const EXCLUDE = new Set(['node_modules', 'dist', '.generated', '.wrangler', '.dev.vars', 'dev.log', 'dev-default.log', 'dev-server.log', 'npm-ci.log']);
+const EXCLUDE = new Set(['node_modules', 'dist', '.generated', '.wrangler', '.dev.vars', 'dev.log', 'dev-default.log', 'dev-server.log', 'npm-ci.log',
+  // kept local on purpose: the release packager and its write-up are not part of the published adapter
+  'release.mjs', 'RELEASE.local.md']);
 const EXCLUDE_FILE = /\.generated\.js$|\.out$/;
 
 const log = (...a) => console.log('[export]', ...a);
