@@ -155,7 +155,8 @@ npx wrangler deploy
 
 适配层是"拷进检出就能用"的形态：`node tools/export.mjs` 会生成一个独立目录（默认 `../Stronghold-Protocol-Cloudflare`），里面有面向使用者的 `README.md`、`VERSION`（记录验证过的上游版本与提交）、`LICENSE`/`NOTICE.md`，以及可直接拷入任意 Stronghold-Protocol 检出的 `cloudflare/`（不含依赖与构建产物，共 20 余个文件）。仓库 [`Stronghold-Protocol_cf_worker`](https://github.com/xiaomasama/Stronghold-Protocol_cf_worker) 里已经带着 `cloudflare/`，这个独立包是给"不想 fork、只想拿适配层"的人准备的。
 
-兼容性：**原版 sganggs 0.2.1 / 0.2.2 / 0.2.3** 与 **fork xinhai-ai 0.2.0** 都实测通过 —— 构建会自动识别两者的差异：前者需要把 `server/sim/content` 里的计算型动态导入改写成字面量，后者源码本身就是字面量加载器（0 处改写）；前者由适配层注入公告横幅，后者自带的公告客户端接管显示且公告数据继续沿用其 `config/announcements.json`。
+兼容性：**原版 sganggs 0.2.1 / 0.2.2 / 0.2.3 / 0.2.4** 与 **fork xinhai-ai 0.2.0** 都实测通过 —— 构建会自动识别两者的差异：前者需要把 `server/sim/content` 里的计算型动态导入改写成字面量，后者源码本身就是字面量加载器（0 处改写）；前者由适配层注入公告横幅，后者自带的公告客户端接管显示且公告数据继续沿用其 `config/announcements.json`。
+0.2.4 的实测：构建通过（210 个 kit、365 个模块改写，新增的干员 kit 照旧被就地改写）、`smoke` 全过、真打一局走完 2 个回合、浏览器里标题页 / 新大厅头部 / 对局内伤害面板（数值与模拟记账一致）/ 预载页存储面板全部正常——而且**服务端 0.2.3 → 0.2.4 的升级顺带验证了缓存分舱**：部署新版本后 Service Worker 自动删掉 `sp-assets-v0.2.3` 与旧的 `sp-data-*`，换成 `sp-assets-v0.2.4`。0.2.4 无需任何适配层改动（它只动了三个干员 kit、版本号和客户端新特性：一键重刷、新大厅头部）。
 0.2.2 / 0.2.3 的实测：构建通过（0.2.3：210 个干员 kit、364 个模块改写）、`smoke` 全过、真打一局走完 2 个回合的服务端模拟、浏览器过一遍标题页 / 大厅 / 统计页 / 一局真实战斗的伤害面板。0.2.2 带来的两处适配层改动：构建标记（build tag）的输入扩到 `server/sim` + `shared` + `data`（上游 0.2.2 的 `buildTag.js` 同样这么做了，否则只改模拟代码的部署不会让已打开的页面刷新），以及公告横幅不再吃掉游戏顶栏控件的点击（0.2.2 新增的「统计」按钮正好落在横幅那一条上）。
 
 ## 许可
