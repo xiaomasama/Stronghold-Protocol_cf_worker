@@ -18,6 +18,7 @@ import { servePacks } from './packs.js';
 import { serveAnnounceApi } from './announce.js';
 import { serveServerInfoApi } from './server-info.js';
 import { REAL_IP_HEADER } from './req-shim.js';
+import { splitHashedPath } from '../.generated/shared/assetPaths.js';
 
 export { GameServer };
 
@@ -128,6 +129,27 @@ export default {
     // mirrors server/http/static.js. Language packs are ordinary files at /i18n/… and /data/i18n/… .
     const packs = await servePacks(request, env, url);
     if (packs) return packs;
+
+    // Content-hashed asset URLs (upstream 0.2.6, shared/assetPaths.js): the served data/assets.json names every
+    // file as /assets/~<hash>/… (fonts likewise, audio as /media/~<hash>/…), so a browser may keep it for a year.
+    // The hash is not part of the path on disk — strip the segment, serve the file, and say immutable. The hash
+    // itself is not re-checked against the file (server/http/assetIndex.js does that with a file-system scan a
+    // Worker does not have, and a wrong hash would only cost a cache entry); what the manifests this deployment
+    // writes name is what build.mjs §2c hashed, and an unknown path 404s like any other.
+    if (url.pathname.startsWith('/assets/~') || url.pathname.startsWith('/fonts/~')) {
+      const { hash, path } = splitHashedPath(url.pathname);
+      if (hash) {
+        const target = new URL(url);
+        target.pathname = path;
+        const res = await env.ASSETS.fetch(new Request(target, { method: request.method, headers: request.headers }));
+        if (res.status === 200) {
+          const headers = new Headers(res.headers);
+          headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+          return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+        }
+        return res;
+      }
+    }
 
     return env.ASSETS.fetch(request);
   },

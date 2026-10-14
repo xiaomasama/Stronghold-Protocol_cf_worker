@@ -254,7 +254,7 @@ cd cloudflare
 node tools/smoke.mjs http://127.0.0.1:8787
 ```
 
-覆盖：静态路由（`/`、`/js`、`/css`、`/shared`、`/sim`、`/vendor`、`/data`、`/data.js`）、`/sim/nodeData.js` 必须 404、**内容包与语言**（`/packs/index.json`、`/i18n/<code>.json`、`/data/i18n/<code>.json`，以及 `/packs/README.md`、目录穿越、`/packs/<lang>/<file>` 必须 404 的白名单）、`/healthz` 字段、**内容模块计数与数据键数**、素材（角色图、BGM、`/media/…` 无扩展名音频路由、本地美术清单与文件、1 天缓存头）、以及完整的联机协议：`hello → welcome`、`ping → pong`、建房、第二人加入、**用 token 断线重连恢复会话**、离开房间。
+覆盖：静态路由（`/`、`/js`、`/css`、`/shared`、`/sim`、`/vendor`、`/data`、`/data.js`）、`/sim/nodeData.js` 必须 404、**内容包与语言**（`/packs/index.json`、`/i18n/<code>.json`、`/data/i18n/<code>.json`，以及 `/packs/README.md`、目录穿越、`/packs/<lang>/<file>` 必须 404 的白名单）、`/healthz` 字段、**内容模块计数与数据键数**、素材（角色图、BGM、`/media/…` 无扩展名音频路由、本地美术清单与文件、1 天缓存头）、**内容哈希素材 URL（0.2.6：`/data/assets.json` 必须是改写过的视图、哈希段的 16 位十六进制必须等于所服务字节的 SHA-256 前缀、哈希路径与纯路径字节一致且带一年 immutable、客户端推导的 `/media/~<hash>/…` 同样可取）**、以及完整的联机协议：`hello → welcome`、`ping → pong`、建房、第二人加入、**用 token 断线重连恢复会话**、离开房间。
 
 结尾应打印 `All checks passed.`。任何 `FAIL` 都会带上实际值，便于定位。
 
@@ -449,7 +449,7 @@ curl https://stronghold-protocol.<你的子域>.workers.dev/healthz
 
 **Durable Object 计费**：在"有连接或定时器"期间按持续时间计费；一台朋友局服务器（几个人、偶尔几局）量很小，正常在 $5 订阅内。
 
-**省流量小技巧**：素材走静态资源通道，带 `Cache-Control: public, max-age=86400`（`/assets`、`/fonts`、`/vendor` 1 天），客户端刷新不会重复拉取；页面/代码/数据是 `must-revalidate`，总是最新的（部署后自动刷新靠 `/healthz`）。
+**省流量小技巧**：素材走静态资源通道，带 `Cache-Control: public, max-age=86400`（`/assets`、`/fonts`、`/vendor` 1 天）；0.2.6 起浏览器拿到的清单用的是内容哈希 URL（`/assets/~<hash>/…`、`/media/~<hash>/…`），这些回的是 `max-age=31536000, immutable`——文件不变就一年不重问，文件变了 URL 也就变了。页面/代码/数据是 `must-revalidate`，总是最新的（部署后自动刷新靠 `/healthz`）。
 
 ---
 
@@ -821,13 +821,23 @@ npm run info:push                                       # 写入 KV（key: serve
 
 | 路径 | 策略 | 理由 |
 |---|---|---|
-| `/assets/` `/fonts/` `/vendor/` | **缓存优先**，未命中则取一次并入库 | 大而稳定的美术/字体/库；顺带让"边玩边下"自动生效（游戏自己加载过的也会入库） |
+| `/assets/` `/fonts/` `/vendor/` `/media/` | **缓存优先**，未命中则取一次并入库 | 大而稳定的美术/字体/库/音频；顺带让"边玩边下"自动生效（游戏自己加载过的也会入库） |
 | `/data/` `/i18n/` | **网络优先**，离线时才用缓存 | 小 JSON、随构建变化，绝不陈旧 |
 | 其余全部（index.html、`/js`、`/css`、`/shared`、`/ws`、`/healthz`、`/api/*`、`/packs/*`、`/sp-*.js`、清单本身） | **完全不介入** | 外壳永远最新、WebSocket 不受影响 |
 
+`/media/` 是 0.2.6 起才进这张表的：音频被客户端请求为 `/media/~<hash>/…`（内容哈希素材 URL，见 §12.7.6 末尾与根 README「已知差异」），
+预载页与后台下载器把它写进 assets 舱，游戏播放时也查同一个 key——不列进来就会"预载过的音频播放时又下一遍"。
+
 **缓存分舱与更新**：`sp-assets-v<应用版本>` 跨同版本重建存活（改适配层代码不会让访客重下 351 MiB）；`sp-data-<构建标记>` 随构建淘汰。
 部署时 `dist/sw.js` 的两个常量被 `build.mjs` 重新烘焙 → 字节变化 → 浏览器安装新 worker → `activate` 里删掉所有过期的 `sp-*` 舱。
-`/sw.js` 自身由 `_headers` 标成 `no-cache`（否则 SW 更新可能被缓存挡住）。**新版本发布后素材会重下**——这是"绝不陈旧"换来的代价。
+`/sw.js` 自身由 `_headers` 标成 `no-cache`（否则 SW 更新可能被缓存挡住）。**新版本发布后素材会重下**——这是"绝不陈旧"换来的代价；
+0.2.6 的内容哈希 URL（`/assets/~<hash>/…`，`max-age=31536000, immutable`）让"只改了一个文件"的部署在浏览器 HTTP 缓存这一层是增量的，
+但 Cache Storage 的素材舱仍然整舱随版本号轮换（简单、可预测，代价是一次全量）。
+
+**素材 URL 的内容哈希（0.2.6）**：服务端交给浏览器的两份清单里，每个素材 URL 自带内容哈希段（`/assets/~<hash>/…`、`/media/~<hash>/…`）。
+构建期 `build.mjs` 用上游的 `rewriteManifest` 重写 `dist/data/assets.json` 与 `dist/data/local-assets.json`（与 Node 版逐字节一致，见 §7.1 自检），
+Worker 的 `src/worker.js` / `src/media.js` 把 `~<hash>` 段剥掉再按原路径取文件、对哈希路径回 `immutable`。
+因此如果哪天看到素材 404 而文件明明在，先确认 `~` 后面是 **16 位小写十六进制**（客户端只会用清单里给的段，正常不会遇到；手工拼 URL 容易拼错）。
 
 **页面与开关**：`/preload` 页底部的「存储与缓存」面板显示存储引擎、已缓存文件数/体积、配额用量、持久化状态与 worker 计数；
 所有维护操作收在**默认折叠的「高级操作」**里（申请持久化存储 / 清空资源缓存 / 关闭 Service Worker，各带一行说明）。
@@ -1027,7 +1037,7 @@ npx wrangler delete                 # 删除 Worker（含静态资源与它的 D
 | `/fonts/fonts.css` 404 | 正常：没下字体时用系统字体；想用原版字体就跑 `node tools/setup.mjs` |
 | 改了本地提取美术，线上没变 | 静态资源随版本不可变 → 必须 `npm run build` + `wrangler deploy` |
 | 部署后浏览器还显示旧界面 | 页面最长 60 秒后自动刷新；也可以强刷（Ctrl+F5） |
-| 部署后**素材**看起来还是旧的 / 想彻底重置浏览器里的缓存 | 装了 Service Worker 时 `/assets` 走 Cache Storage：在 `/preload` 展开「高级操作」点**清空资源缓存**（下次预载重下），或访问 `/?nosw=1` 关掉整层（`/?nosw=0` 恢复）；`/data`、`/i18n` 在新构建下会自动淘汰，不用手动清。详见 §12.7.6 |
+| 部署后**素材**看起来还是旧的 / 想彻底重置浏览器里的缓存 | 装了 Service Worker 时 `/assets` 走 Cache Storage：在 `/preload` 展开「高级操作」点**清空资源缓存**（下次预载重下），或访问 `/?nosw=1` 关掉整层（`/?nosw=0` 恢复）；`/data`、`/i18n` 在新构建下会自动淘汰，不用手动清。0.2.6 起素材 URL 自带内容哈希（改了文件就是新 URL），所以就算不清，浏览器也不会拿旧字节 —— 要清的只是"这份旧缓存占的空间"。详见 §12.7.6 |
 | 想看真实错误堆栈 | `npx wrangler tail --status error`，或在控制台 Worker → Logs（已在配置里开启 `observability`） |
 | 房间里的对局在"所有人都掉线"后消失 | 对局中的定时器会让 DO 保持存活（实测 40 秒无连接仍持续运行）；但**完全空闲**（没有对局、没有连接、没有定时器）时 DO 会被回收，内存态清空 —— 与原 Node 版"重启服务器"等价，本项目本来就没有存档 |
 | 线上延迟高 / 手感很钝 | 先访问 `/where` 看两跳：`edge.clientTcpRttMs`（你到 Cloudflare 边缘，物理距离，改不了）与 `edge.colo` vs `durableObject.colo`（跨区域就多一个来回）。给 DO 指定区域见 §12.5。大陆访问 Cloudflare 免费/普通付费计划没有就近节点，想真正低延迟要用香港/日本/新加坡的自建服务器（`docs/DEPLOY.md`） |
@@ -1078,7 +1088,7 @@ cloudflare/
 
 | 方面 | Node 版 | Cloudflare 版 |
 |---|---|---|
-| 静态响应缓存头 | `/assets`、`/fonts`、`/vendor` 1 天；`?v=` immutable | 同前者；`?v=` 退化为正常 revalidate（功能无差） |
+| 静态响应缓存头 | `/assets`、`/fonts`、`/vendor` 1 天；`?v=` 或内容哈希 immutable | 前一条相同；0.2.6 起内容哈希那一条也复刻了（`/assets/~<hash>/…`、`/media/~<hash>/…` 回 `max-age=31536000, immutable`）；`?v=` 退化为正常 revalidate（功能无差） |
 | 404 页面 | 项目自带中文错误页 | 平台默认 404 页 |
 | Range | 音频/视频答 206 | 忽略 Range，整段 200（客户端不需要） |
 | 改 `data/local-assets.json` | 不必重启，刷新页面即可 | 必须重新构建 + 重新部署 |

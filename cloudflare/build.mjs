@@ -6,7 +6,8 @@
 // dist/ mirrors the URL space server/index.js serves out of the repository:
 //
 //   public/**     → dist/**            (/index.html, /js/…, /css/…, /vendor/…, /assets/…, /fonts/…)
-//   data/**       → dist/data/**       (/data/config.json …)
+//   data/**       → dist/data/**       (/data/config.json …; the two asset manifests get content-hashed art
+//                                       URLs written into the dist copy — §2c, the committed files untouched)
 //   shared/**     → dist/shared/**     (/shared/protocol.js …)
 //   server/sim/** → dist/sim/**        (ES modules only; the Node-only loader nodeData.js is left out)
 //   /data.js      → dist/data.js       (the browser stand-in server/index.js generates: DATA_SHIM_JS)
@@ -194,6 +195,94 @@ writeFileSync(join(dist, '_headers'), [
 ].join('\n'));
 
 // ------------------------------------------------------------------------------------------------
+// 2c. dist/data/{assets,local-assets}.json — the served view of the game's manifests (upstream 0.2.6)
+// ------------------------------------------------------------------------------------------------
+//
+// Since 0.2.6 every art URL a server hands out carries the content hash of its file as its first segment —
+// `/assets/char/avatar/x.png` → `/assets/~<hash>/char/avatar/x.png`, `/fonts/…` likewise (shared/assetPaths.js) —
+// so a browser may keep the file for a year and asks again only when the bytes change. server/http/static.js
+// answers /data/assets.json with that rewrite, computed on the fly by server/http/assetViews.js over the
+// file-system index server/http/assetIndex.js builds. A Worker has neither, so the rewrite is done here, at
+// build time, and written into dist/data/ — with upstream's own rewriteManifest and an index over exactly the
+// files this deployment serves, so the Worker and the Node server hand out the same bytes.
+//
+// The committed data/*.json stay untouched: they are also what the Durable Object bundles as its VFS
+// (src/data-modules.generated.js below), and the simulation reads plain paths.
+//
+// A URL whose file this deployment does not have stays exactly as it is (upstream's behaviour, and what the
+// preload manifest's `missing` list tells the player to fix with `node tools/setup.mjs`).
+
+/** The served view of each manifest, for the preload manifest below (§2b). Filled in by section 2c. */
+const viewDocs = {};
+
+{
+  const { rewriteManifest } = await import(pathToFileURL(join(repo, 'server', 'http', 'assetViews.js')).href);
+  const { ASSET_HASH_HEX } = await import(pathToFileURL(join(repo, 'shared', 'assetPaths.js')).href);
+  /** assetIndex.js hash16: the first 16 hex digits of the file's SHA-256. */
+  const hash16 = (data) => createHash('sha256').update(data).digest('hex').slice(0, ASSET_HASH_HEX);
+
+  // The index assetIndex.js builds by scanning public/: every file under assets/ and fonts/, keyed by the rel
+  // path a manifest URL maps to ('/assets/x.png' → 'assets/x.png'). The lookup is case-insensitive like
+  // upstream's — two names differing only in case are ambiguous, hence unknown.
+  const rels = new Map();
+  const lower = new Map();
+  for (const root of ['assets', 'fonts']) {
+    const base = join(dist, root);
+    if (!existsSync(base)) continue;
+    const walk = (dir, rel) => {
+      for (const d of readdirSync(dir, { withFileTypes: true })) {
+        if (d.isDirectory()) walk(join(dir, d.name), `${rel}/${d.name}`);
+        else if (d.isFile()) rels.set(`${rel}/${d.name}`, join(dir, d.name));
+      }
+    };
+    walk(base, root);
+  }
+  for (const rel of rels.keys()) {
+    const key = rel.toLowerCase();
+    lower.set(key, lower.has(key) ? null : rel);
+  }
+
+  const hashes = new Map();  // rel → 16 hex, read on first use: only what a manifest names is hashed
+  const hashOf = (rel) => {
+    const c = rels.has(rel) ? rel : (lower.get(String(rel).toLowerCase()) ?? null);
+    if (!c) return null;
+    if (!hashes.has(c)) {
+      let h = null;
+      try { h = hash16(readFileSync(rels.get(c))); } catch { h = null; }
+      hashes.set(c, h);
+    }
+    return hashes.get(c);
+  };
+
+  // index.js modelHashOf: a Spine model's hash is the hash of its members' hashes, in the order given.
+  const modelHash = (list) => {
+    if (!Array.isArray(list) || !list.length) return null;
+    const parts = [];
+    for (const rel of list) {
+      const h = hashOf(rel);
+      if (!h) return null;
+      parts.push(h);
+    }
+    return hash16(parts.join('\n'));
+  };
+
+  for (const name of ['assets.json', 'local-assets.json']) {
+    const file = join(dist, 'data', name);
+    if (!existsSync(file)) continue;
+    let doc;
+    try { doc = JSON.parse(readFileSync(file, 'utf8')); } catch (e) {
+      log(`data/${name}: not valid JSON (${e.message}) — served as it is`);
+      continue;
+    }
+    const { doc: view, hashed, plain } = rewriteManifest(doc, name, { hashOf, modelHash });
+    const body = JSON.stringify(view);
+    writeFileSync(file, body);
+    viewDocs[name] = view;
+    log(`data/${name}: served view — ${hashed} URL(s) hashed, ${plain} left plain (${(body.length / 1048576).toFixed(2)} MiB)`);
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
 // 2b. dist/data/preload-manifest.json — the resource list for the /preload page
 // ------------------------------------------------------------------------------------------------
 //
@@ -202,20 +291,32 @@ writeFileSync(join(dist, '_headers'), [
 // only-if-cached probe) and "verify what is cached" (length + hash) possible without the page having to know
 // how the client derives asset URLs. Entries the game's own manifest names but the server does not have are
 // listed separately, so the page can point at `node tools/setup.mjs` instead of just failing.
+//
+// The list is taken from the served views of section 2c, not from the committed manifests: an art URL there
+// already carries its content hash, so a preloaded file is stored under the very key the game asks for. Audio is
+// the client's own transformation away from that (public/js/media.js turns `/assets/~<hash>/audio/bgm/x.mp3`
+// into `/media/~<hash>/bgm/x`) — the cache is keyed by URL, so a track stored under another key would be
+// downloaded a second time when it is played.
 
 {
-  const { createHash } = await import('node:crypto');
+  const { mediaUrl } = await import(pathToFileURL(join(repo, 'public', 'js', 'media.js')).href);
+  const { AUDIO_EXTS } = await import(pathToFileURL(join(repo, 'shared', 'media.js')).href);
+  const { splitHashedPath } = await import(pathToFileURL(join(repo, 'shared', 'assetPaths.js')).href);
+  const ART_URL = /^\/(?:assets|fonts)\/./;
+  /** mediaUrl only rewrites same-origin URLs: a placeholder origin makes the manifests' relative URLs one. */
+  const PRELOAD_ORIGIN = 'https://stronghold.invalid';
   const wanted = new Set();
   const collect = (node) => {
     if (Array.isArray(node)) { for (const v of node) collect(v); return; }
     if (node && typeof node === 'object') { for (const v of Object.values(node)) collect(v); return; }
     if (typeof node !== 'string') return;
     const p = node.trim();
-    if (/^\/(?!\/)/.test(p) && /\.(png|jpe?g|webp|gif|svg|mp3|m4a|aac|ogg|oga|opus|wav|json|skel|atlas|otf|ttf|woff2?)$/i.test(p)) wanted.add(p);
+    if (!/^\/(?!\/)/.test(p) || /[?#]/.test(p)) return;
+    if (ART_URL.test(p)) { wanted.add(mediaUrl(p, PRELOAD_ORIGIN)); return; } // every art path, whatever its extension
+    if (/\.(png|jpe?g|webp|gif|svg|mp3|m4a|aac|ogg|oga|opus|wav|json|skel|atlas|otf|ttf|woff2?)$/i.test(p)) wanted.add(p);
   };
-  const readJson = (rel) => { try { return JSON.parse(readFileSync(join(repo, rel), 'utf8')); } catch { return null; } };
-  collect(readJson('data/assets.json'));          // every path the game's asset manifest names
-  collect(readJson('data/local-assets.json'));    // the optional local-client art (3D board textures …)
+  collect(viewDocs['assets.json']);          // every path the game's asset manifest names, as served (§2c)
+  collect(viewDocs['local-assets.json']);    // the optional local-client art (3D board textures …)
   for (const d of readdirSync(join(dist, 'data'))) if (d.endsWith('.json')) wanted.add(`/data/${d}`);
   for (const dir of [join(dist, 'data', 'i18n'), join(dist, 'i18n')]) {
     if (!existsSync(dir)) continue;
@@ -223,14 +324,39 @@ writeFileSync(join(dist, '_headers'), [
     for (const f of readdirSync(dir)) if (f.endsWith('.json')) wanted.add(prefix + f);
   }
 
+  /**
+   * The dist path a preload URL names: an art path (with or without its hash segment) is the file itself, and a
+   * /media/… path goes back to assets/audio/… through the same extension probe src/media.js runs on Cloudflare.
+   * @param {string} url @returns {string | null}
+   */
+  function resolvePreloadUrl(url) {
+    let path;
+    try { path = splitHashedPath(decodeURIComponent(url)).path; } catch { return null; }
+    const m = /^\/media\/(.+)$/.exec(path);
+    if (!m) return join(dist, path.slice(1));
+    const segments = m[1].split('/');
+    const last = segments.pop();
+    const dot = last.lastIndexOf('.');
+    const given = dot > 0 ? last.slice(dot).toLowerCase() : '';
+    const wantedExt = AUDIO_EXTS.includes(given) ? given : '';
+    const stem = wantedExt ? last.slice(0, -wantedExt.length) : last;
+    if (!stem || stem.startsWith('.')) return null;
+    const order = wantedExt ? [wantedExt, ...AUDIO_EXTS.filter((e) => e !== wantedExt)] : AUDIO_EXTS;
+    for (const ext of order) {
+      const abs = join(dist, 'assets', 'audio', ...segments, stem + ext);
+      try { if (statSync(abs).isFile()) return abs; } catch { /* try the next extension */ }
+    }
+    return null;
+  }
+
   const files = [];
   const missing = [];
   let bytes = 0;
   for (const url of [...wanted].sort()) {
-    const abs = join(dist, decodeURIComponent(url.slice(1)));
+    const abs = resolvePreloadUrl(url);
     let st;
-    try { st = statSync(abs); } catch { missing.push(url); continue; }
-    if (!st.isFile()) { missing.push(url); continue; }
+    try { st = abs ? statSync(abs) : null; } catch { st = null; }
+    if (!st || !st.isFile()) { missing.push(url); continue; }
     const hash = createHash('sha256').update(readFileSync(abs)).digest('hex');
     files.push([url, st.size, hash]);
     bytes += st.size;

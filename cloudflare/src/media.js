@@ -6,8 +6,12 @@
 // the candidate extensions in the order shared/media.js defines, first hit wins. Everything else (Range
 // support for seeking, Content-Type, ETag, the 1-day Cache-Control of /assets/…) comes from the asset store
 // serving the very file the client would otherwise have asked for.
+//
+// A served manifest's URL keeps its content-hash segment (0.2.6): `/media/~<hash>/bgm/act1`. The segment is
+// stripped before the extension probe, and the answer goes out immutable — the URL changes with the bytes.
 
 import { MEDIA_PREFIX, AUDIO_EXTS } from '../.generated/shared/media.js';
+import { splitHashedPath } from '../.generated/shared/assetPaths.js';
 
 /** Request headers that must survive the rewrite so audio seeking and revalidation keep working. */
 const FORWARD_HEADERS = ['range', 'if-range', 'if-none-match', 'if-modified-since', 'accept', 'accept-encoding', 'accept-language'];
@@ -23,8 +27,13 @@ const forbidden = () => new Response('禁止访问 · Forbidden', { status: 403,
  */
 export async function serveMedia(request, env, url) {
   if (!url.pathname.startsWith(MEDIA_PREFIX)) return null;
+  // Upstream 0.2.6: a served manifest names audio as /assets/~<hash>/audio/…, which public/js/media.js turns
+  // into /media/~<hash>/… (shared/assetPaths.js). The segment is the content hash, not a directory — strip it
+  // and keep the answer for a year, since the URL changes whenever the bytes do (hashedFileOpts on the Node
+  // server; a Worker has no file-system index to re-check the hash against).
+  const { hash, path } = splitHashedPath(url.pathname);
   let rest;
-  try { rest = decodeURIComponent(url.pathname.slice(MEDIA_PREFIX.length)); } catch { return notFound(); }
+  try { rest = decodeURIComponent(path.slice(MEDIA_PREFIX.length)); } catch { return notFound(); }
   const segments = rest.split('/').filter((s) => s.length > 0);
   if (!segments.length || rest.endsWith('/')) return notFound();
   if (segments.some((s) => s === '..' || s === '.')) return forbidden();
@@ -45,9 +54,16 @@ export async function serveMedia(request, env, url) {
     const assetPath = '/' + [...dir, stem + ext].map(encodeURIComponent).join('/');
     // eslint-disable-next-line no-await-in-loop
     const res = await env.ASSETS.fetch(assetRequest(request, url, assetPath));
-    if (res.status === 200 || res.status === 206 || res.status === 304) return res;
+    if (res.status === 200 || res.status === 206 || res.status === 304) return hash ? keepForever(res) : res;
   }
   return notFound();
+}
+
+/** The same response with a year-long cache policy — the request URL carries the content hash. */
+function keepForever(res) {
+  const headers = new Headers(res.headers);
+  headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
 /** A request for the resolved asset URL, keeping the headers that matter for media. */

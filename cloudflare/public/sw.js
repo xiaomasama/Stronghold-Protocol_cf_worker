@@ -10,7 +10,11 @@
 //
 // Routing — same-origin GET only, and every other request is left completely untouched:
 //   /assets/ /fonts/ /vendor/   cache-first   — the big, stable art. A miss fetches once and stores, so simply
-//                                              playing also fills the cache (边玩边下 without the chip).
+//   /media/                                    playing also fills the cache (边玩边下 without the chip). Since
+//                                              0.2.6 art arrives as /assets/~<hash>/… and audio as
+//                                              /media/~<hash>/…: /media/ is here because the preload page (and
+//                                              the game) store tracks under that key — without it, audio would
+//                                              never be served from the cache and every play would hit the wire.
 //   /data/ /i18n/               network-first — small JSON that changes per build; the cache is the offline
 //                                              fallback, never the source of truth.
 //   everything else             untouched     — the shell (index.html, /js, /css, /shared), /ws, /healthz,
@@ -31,7 +35,7 @@ const CACHE_ASSETS = 'sp-assets-v' + APP;
 const CACHE_DATA = 'sp-data-' + BUILD;
 const KEEP = [CACHE_ASSETS, CACHE_DATA];
 
-const ASSET_PREFIXES = ['/assets/', '/fonts/', '/vendor/'];
+const ASSET_PREFIXES = ['/assets/', '/fonts/', '/vendor/', '/media/'];
 const DATA_PREFIXES = ['/data/', '/i18n/'];
 const DATA_SKIP = ['/data/preload-manifest.json'];   // the list itself must never be served stale
 

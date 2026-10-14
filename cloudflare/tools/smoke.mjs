@@ -9,6 +9,7 @@
 // the session token (the resume path). Every check prints ok/FAIL and the process exits non-zero on failure.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROTOCOL_VERSION, APP_VERSION } from '../../shared/constants.js';
@@ -30,8 +31,11 @@ async function get(path, init = {}) {
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(base + path, { ...init, signal: ctrl.signal, redirect: 'manual' });
-    const body = await res.text();
-    return { status: res.status, type: res.headers.get('content-type') || '', cache: res.headers.get('cache-control') || '', etag: res.headers.get('etag'), body };
+    const buf = Buffer.from(await res.arrayBuffer());
+    return {
+      status: res.status, type: res.headers.get('content-type') || '', cache: res.headers.get('cache-control') || '',
+      etag: res.headers.get('etag'), body: buf.toString('utf8'), buf, bytes: buf.length,
+    };
   } catch (e) {
     return { status: 0, error: e && e.message };
   } finally {
@@ -172,6 +176,50 @@ console.log('\n[assets]');
       check(r.status === 200, `local-client art file served (${first.split('/').slice(-1)[0]})`, `${r.status} ${r.type}`);
     } else {
       console.log('  note  local-art manifest has no /assets/ path to probe');
+    }
+  }
+
+  // Content-hashed asset URLs (upstream 0.2.6): the served manifest names /assets/~<hash>/… and the browser asks
+  // for exactly those (build.mjs §2c rewrites the committed data/*.json with upstream's own rewriteManifest). The
+  // segment is the first 16 hex of the file's own SHA-256 — check that, the year-long immutable policy, and the
+  // audio form the client derives (/media/~<hash>/…). A checkout whose art is not downloaded has no hashed URL.
+  const HASHED = /\/(?:~([0-9a-f]{16}))\//;
+  const servedManifest = await get('/data/assets.json');
+  const viewPaths = [];
+  const walkView = (o) => {
+    if (Array.isArray(o)) for (const v of o) walkView(v);
+    else if (o && typeof o === 'object') for (const v of Object.values(o)) walkView(v);
+    else if (typeof o === 'string' && /^\/assets\/.*\.[a-z0-9]{2,5}$/i.test(o)) viewPaths.push(o);
+  };
+  try { walkView(JSON.parse(servedManifest.body)); } catch { /* not JSON: the checks below report it */ }
+  const plainOf = (p) => p.replace(/~[0-9a-f]{16}\//, '');
+  const hashedPaths = viewPaths.filter((p) => HASHED.test(p));
+  const hashedImg = hashedPaths.find((p) => /\.(png|jpe?g|webp)$/i.test(p) && existsSync(repo + 'public' + plainOf(p)));
+  const hashedAudio = hashedPaths.find((p) => /^\/assets\/audio\/.+\.[a-z0-9]{2,5}$/i.test(plainOf(p)) && existsSync(repo + 'public' + plainOf(p)));
+  if (!hashedPaths.length) {
+    console.log('  skip  /data/assets.json names no content-hashed URL (no art in this checkout, or the served view is missing)');
+  } else {
+    ok(`GET /data/assets.json → the served view (${hashedPaths.length} URL(s) carry a content hash)`);
+    if (hashedImg) {
+      const h = await get(hashedImg);
+      const plain = await get(plainOf(hashedImg));
+      check(h.status === 200, `GET ${hashedImg.split('/').slice(-2).join('/')} (hashed form) → 200`, `${h.status} ${h.type}`);
+      check(!!h.cache && h.cache.includes('immutable') && h.cache.includes('31536000'), 'hashed URLs carry the year-long immutable Cache-Control', h.cache || '(none)');
+      check(plain.status === 200 && h.bytes === plain.bytes, 'the hashed and the plain URL serve the same bytes', `${h.bytes} vs ${plain.bytes}`);
+      const want = HASHED.exec(hashedImg)[1];
+      const got = createHash('sha256').update(h.buf).digest('hex').slice(0, 16);
+      check(want === got, `the hash segment is the served bytes' own SHA-256 prefix (${want})`, got);
+    } else {
+      console.log('  note  no hashed image whose file is in this checkout');
+    }
+    if (hashedAudio) {
+      const bare = plainOf(hashedAudio).replace(/^\/assets\/audio\//, '').replace(/\.[a-z0-9]+$/i, '');
+      const mediaPath = `/media/~${HASHED.exec(hashedAudio)[1]}/${bare}`;
+      const media = await get(mediaPath);
+      check(media.status === 200 && media.type.startsWith('audio/'), `GET ${mediaPath} (the form the client derives) → audio`, `${media.status} ${media.type}`);
+      check(!!media.cache && media.cache.includes('immutable'), 'hashed /media/ URLs carry the immutable policy', media.cache || '(none)');
+    } else {
+      console.log('  note  no hashed audio whose file is in this checkout');
     }
   }
 }
