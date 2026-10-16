@@ -254,7 +254,7 @@ cd cloudflare
 node tools/smoke.mjs http://127.0.0.1:8787
 ```
 
-覆盖：静态路由（`/`、`/js`、`/css`、`/shared`、`/sim`、`/vendor`、`/data`、`/data.js`）、`/sim/nodeData.js` 必须 404、**内容包与语言**（`/packs/index.json`、`/i18n/<code>.json`、`/data/i18n/<code>.json`，以及 `/packs/README.md`、目录穿越、`/packs/<lang>/<file>` 必须 404 的白名单）、`/healthz` 字段、**内容模块计数与数据键数**、素材（角色图、BGM、`/media/…` 无扩展名音频路由、本地美术清单与文件、1 天缓存头）、**内容哈希素材 URL（0.2.6：`/data/assets.json` 必须是改写过的视图、哈希段的 16 位十六进制必须等于所服务字节的 SHA-256 前缀、哈希路径与纯路径字节一致且带一年 immutable、客户端推导的 `/media/~<hash>/…` 同样可取）**、以及完整的联机协议：`hello → welcome`、`ping → pong`、建房、第二人加入、**用 token 断线重连恢复会话**、离开房间。
+覆盖：静态路由（`/`、`/js`、`/css`、`/shared`、`/sim`、`/vendor`、`/data`、`/data.js`）、`/sim/nodeData.js` 必须 404、**内容包与语言**（`/packs/index.json`、`/i18n/<code>.json`、`/data/i18n/<code>.json`，以及 `/packs/README.md`、目录穿越、`/packs/<lang>/<file>` 必须 404 的白名单）、`/healthz` 字段、**内容模块计数与数据键数**、素材（角色图、BGM、`/media/…` 无扩展名音频路由、本地美术清单与文件、1 天缓存头）、**内容哈希素材 URL（0.2.6：`/data/assets.json` 必须是改写过的视图、哈希段的 16 位十六进制必须等于所服务字节的 SHA-256 前缀、哈希路径与纯路径字节一致且带一年 immutable、客户端推导的 `/media/~<hash>/…` 同样可取）**、**内容身份与插件目录（0.3.0：`content.vanilla` 是 64 位哈希且与 `welcome.content.vanilla` 相同、`welcome` 不带 `plugins`（客户端因此不请求任何插件文档）、`/cs/<cs16>/index.json` 可取且 immutable 而未知 cs 404、`/plugins/index.json` 200 且 no-store、`/vs/` 与 `/p/` 404、`room.state.content` 是 `{cs, vanilla:true, plugins:[]}`）**、以及完整的联机协议：`hello → welcome`、`ping → pong`、建房、第二人加入、**用 token 断线重连恢复会话**、离开房间。
 
 结尾应打印 `All checks passed.`。任何 `FAIL` 都会带上实际值，便于定位。
 
@@ -851,6 +851,36 @@ Worker 的 `src/worker.js` / `src/media.js` 把 `~<hash>` 段剥掉再按原路�
 **实测数字**（本机 dev，5,525 文件 / 351 MiB）：首轮预载 91s；**第二轮 1.3s 全跳过、零网络**；校验 3.5s 全过、零网络；
 游戏页 SW 接管后素材直接命中缓存，缓存随游玩自动增长；关掉 SW 后可正常回退到旧路径。
 
+### 12.7.7 插件系统（0.3.0）：本部署只跑原版内容集
+
+上游 0.3.0 引入了完整的插件系统（`docs/PLUGINS.md`、DESIGN §32）：语言包、外观插件（房间/个人美术覆盖）、玩法插件
+（改数值、新增干员/敌人/波次）、脚本与 UI 插件。**Cloudflare 版不支持它**，而且这不是"少补几个路由"的量级 ——
+它依赖三样 Worker 给不了的东西：
+
+1. **可读写的插件目录**：注册表要扫描 `plugins/`、给每个文件算哈希，并监听目录变化（作者工作流是"放进文件夹就生效"）。
+   Worker 没有文件系统，也没有"部署后上传插件"的稳定落点 —— 除非把插件打进构建产物，那等于装一次插件重新部署一次，
+   还会丢掉上游的哈希/监听语义。
+2. **每个玩法插件内容集一个独立子进程或工作线程**（`server/plugins/*` 的 `createMatchHosts`）：玩法插件改的是模拟内容，
+   上游把每个内容集的比赛放进独立进程跑，好让一个坏插件带不走整个服务器。一个 Durable Object 里没有子进程可派。
+3. **Node 沙箱**：脚本插件跑在 SES(`ses`) + `vm` 里，UI 插件由 `/x/` 可信运行时（工坊）喂数据 —— 前者的宿主是 Node 的
+   `vm` 模块，后者是子进程加本地文件写入。
+
+所以本部署的行为是**明确降级**，不是"半坏"：
+
+| 端点 / 功能 | 本部署 |
+|---|---|
+| 原版内容集（原版干员/敌人/波次/数值） | 照常，在 DO 内就地模拟：`content` 传给 Lobby，`plugins`/`hosts` 留空（上游对"没有插件的服务器"本来就是这样设计的） |
+| 客户端插件 UI（标题页的插件计数、房间 插件 标签与面板、设置 → 外观插件） | 全部不出现：`welcome.content.plugins` 缺省 ⇒ 客户端**不请求任何插件文档**（`public/js/main.js` 的 `pluginCount`） |
+| `GET /plugins/index.json` | 200：构建期跑一遍上游自己的注册表扫描烘焙出的目录（本安装的 4 个语言包，0 个非官方插件），与 Node 版逐字节一致 |
+| `GET /cs/<cs16>/index.json` | 200：vanilla 内容集的索引（37,262 字节，与 Node 版逐字节一致），回 `immutable`；未知 cs → 404 |
+| `GET /vs/<vs16>/overlay.json`、`GET /p/<id>/<hash8>/<path>` | 404（没有可服务的外观插件与文件） |
+| `/x/*` 可信运行时、工坊页（`/studio/…`） | 404（需要 Node 子进程） |
+| 内容身份 `cs` | 构建期算好烘焙，与 Node 版的值相同（`/healthz` 的 `content.vanilla`、`welcome.content.vanilla`、每局 BattleSpec） |
+
+**如果你确实想要插件**：现实的做法是**这个部署别用 Workers**（自建服务器上跑 Node 版即可），或者只做"外观插件"这一个
+子集 —— 那是把插件**打进构建产物**（构建期扫描、把 overlay 与文件放进 `dist/`，运行时由 Worker 提供 `/vs/` 与 `/p/`），
+动态安装与脚本插件仍然做不到。这属于新增特性，不是同步上游的一部分；要做的话单独设计。
+
 ## 13. 日常运维
 
 ### 13.1 更新游戏版本（上游有新提交 / 新 Release）
@@ -900,6 +930,7 @@ git reset --hard FETCH_HEAD     # 浅克隆没有共同祖先，--ff-only 会被
 - 构建会在上游破坏适配假设时**主动报错**（§5 表格里的 ERROR 行），这时按 README「上游更新后」调整适配层。
 - 部署完成后，正在打开的页面会在一两分钟内自动刷新到新版本（`/healthz` 的 build 标记连续两次变化即触发；这个标记已覆盖 `server/sim`、`shared`、`data`，与上游 0.2.2 的 `buildTag.js` 一致 —— 只改模拟逻辑的部署也会让旧页面刷新）。
 - **0.2.2 起**：素材清单新增了条目（日语语音树等，见 `data/assets.json` 的 `audio`），更新后跑一次 `node tools/setup.mjs` 补齐（已存在的会跳过），否则它们会出现在预载页的"缺失"体检里。更新完对一下版本：标题页页脚与 `GET /healthz` 的 `app` 应显示 `0.2.2`。
+- **0.3.0 起**：上游新增 `ses` 依赖（插件脚本沙箱；客户端在需要时加载 `/vendor/ses.umd.js`）。更新后**要跑一次 `npm ci`** —— 它会触发 postinstall 的 `tools/vendor.mjs`，把 `ses.umd.js` / `acorn.mjs` 补进 `public/vendor/`（构建也会检查并补拷，失败只告警不致命，所以忘了也不影响原版玩法）。同版本起素材清单里的 URL 会带内容哈希（0.2.6 的机制），部署后访客**第一次**访问会按新 URL 重新拉一遍素材，这是预期。插件系统在本部署不可用（原因与降级清单见 §12.7.7）：更新后客户端不会请求任何插件文档，游戏行为与 0.2.6 一致。
 
 ### 13.2 只改素材（补字体、重新提取本地美术…）
 
@@ -1088,6 +1119,8 @@ cloudflare/
 
 | 方面 | Node 版 | Cloudflare 版 |
 |---|---|---|
+| 插件系统（0.3.0） | `plugins/` 里的语言包/外观/内容/脚本/UI 插件都能装：外观插件按房间开关（`/vs/`、`/p/`），玩法插件在独立子进程里跑它自己的内容集（`/cs/`），脚本走 SES 沙箱与 `/x/` 可信运行时 | **不支持插件，只跑原版内容集**（原因见 §12.7.7）。客户端不会请求插件文档，一切照旧；`GET /plugins/index.json`（语言包目录）与 `GET /cs/<cs16>/index.json`（vanilla 内容集索引）仍由构建期烘焙提供、与 Node 版逐字节一致，`/vs/`、`/p/`、`/x/` 404 |
+| 内容身份 `cs` | 启动时读文件算 | 构建期用同一个 `computeVanillaContent` 算好烘焙（两边值实测相同） |
 | 静态响应缓存头 | `/assets`、`/fonts`、`/vendor` 1 天；`?v=` 或内容哈希 immutable | 前一条相同；0.2.6 起内容哈希那一条也复刻了（`/assets/~<hash>/…`、`/media/~<hash>/…` 回 `max-age=31536000, immutable`）；`?v=` 退化为正常 revalidate（功能无差） |
 | 404 页面 | 项目自带中文错误页 | 平台默认 404 页 |
 | Range | 音频/视频答 206 | 忽略 Range，整段 200（客户端不需要） |

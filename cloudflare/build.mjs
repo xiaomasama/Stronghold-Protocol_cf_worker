@@ -21,7 +21,6 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -50,10 +49,23 @@ const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
 if (!existsSync(join(repo, 'public', 'index.html'))) throw new Error(`not a Stronghold-Protocol checkout: ${repo}`);
 if (!existsSync(join(repo, 'node_modules'))) throw new Error('run `npm ci` in the repository root first (the build reads server/index.js, which imports ws)');
-if (!existsSync(join(repo, 'public', 'vendor'))) {
-  log('public/vendor is missing — running tools/vendor.mjs (copies the client libraries from node_modules)');
-  const r = spawnSync(process.execPath, [join(repo, 'tools', 'vendor.mjs')], { cwd: repo, stdio: 'inherit' });
-  if (r.status !== 0) throw new Error('tools/vendor.mjs failed');
+// The client libraries under public/vendor/ are copies of node_modules (tools/vendor.mjs) and are not in the
+// repository, so the build keeps them current: a release that adds a library — 0.3.0 added ses and acorn for the
+// plugin sandbox, loaded lazily by public/js/battle/simWorkerRuntime.js — would otherwise ship a page that 404s on
+// it. A failure here is reported, not fatal (the libraries already present are enough for the vanilla game), and
+// it names the fix.
+{
+  const { vendor, VENDOR_FILES } = await import(pathToFileURL(join(repo, 'tools', 'vendor.mjs')).href);
+  const missing = VENDOR_FILES.filter(([, name, optional]) => !optional && !existsSync(join(repo, 'public', 'vendor', name)));
+  if (missing.length) {
+    log(`public/vendor: ${missing.map((m) => m[1]).join(', ')} missing — copying the client libraries from node_modules`);
+    try {
+      vendor({ log: (m) => log(m), warn: (m) => log(m) });
+    } catch (e) {
+      log(`WARNING: tools/vendor.mjs could not finish (${e && e.message}) — run \`npm ci\` in the repository root;`
+        + ' the libraries already in public/vendor are used as they are');
+    }
+  }
 }
 
 // server/index.js is imported for the /data.js stand-in it exports. On forks that add Node-only features to their
@@ -615,6 +627,56 @@ function walkJs(dir, out = []) {
   log(`packs: ${scan.packs.length} loaded${langs.length ? ` (languages: ${langs.join(', ')})` : ''}, `
     + `${servable.length} servable file(s)${scan.skipped.length ? `, ${scan.skipped.length} skipped` : ''}`);
   for (const s of scan.skipped.slice(0, 5)) log(`       skipped ${s.where}: ${s.problems.join('; ')}`);
+}
+
+// The installation's content identity (upstream 0.3.0, DESIGN §32): server/plugins/identity.js hashes the served
+// code (server/sim + shared + the /data.js stand-in) and the gameplay data files into `cs`, which the Lobby puts in
+// `welcome.content`, every room.state, /healthz (`content.vanilla`), every match's BattleSpec and an optional
+// b.result field. The Node server computes it at start by reading those files; a Worker has no file system, so the
+// same function is run here, over the same files, and the result is baked in. (The sim modules the Durable Object
+// actually bundles are the adapted copies in .generated/ — byte-different in the two rewritten files, semantically
+// identical — while `cs` names the installation, exactly as the Node server on this checkout computes it: both
+// values are compared in the compatibility check described in cloudflare/README.md.)
+//
+// The plugin catalogue (GET /plugins/index.json) is the document the Node server builds from its plugin/pack scan —
+// loaded with the language packs of this installation and, on a server that has any, the unofficial plugins. This
+// deployment ships no plugins (the plugin system needs a file system, child processes and a Node sandbox —
+// cloudflare/README.md 「已知差异」 has the details), but the scan still has to run here for the packs it does find:
+// the catalogue is built with upstream's own registry, exactly as server/index.js does at start, and baked in.
+{
+  const { computeVanillaContent } = await import(pathToFileURL(join(repo, 'server', 'plugins', 'identity.js')).href);
+  const content = computeVanillaContent({
+    simDir: join(repo, 'server', 'sim'),
+    sharedDir: join(repo, 'shared'),
+    dataDir: join(repo, 'data'),
+    shim: DATA_SHIM_JS,
+  });
+  const { buildPluginIndex } = await import(pathToFileURL(join(repo, 'shared', 'plugins', 'manifest.js')).href);
+  let catalogue;
+  try {
+    const { createPluginRegistry } = await import(pathToFileURL(join(repo, 'server', 'plugins', 'registry.js')).href);
+    const registry = createPluginRegistry({ publicDir: join(repo, 'public'), dataDir: join(repo, 'data'), packsDir, pluginsDir: join(repo, 'plugins') }, { log: { info: () => {}, warn: (m) => log(`       registry: ${m}`), error: (m) => log(`       registry: ${m}`) } });
+    registry.refresh(true);
+    catalogue = registry.pluginIndex({ vanilla: content.cs });
+  } catch (e) {
+    // A registry that cannot be imported or scanned (a checkout without plugins/, a fork's own layout) still gets a
+    // valid catalogue: upstream's shared builder produces the one a zero-plugin server serves.
+    log(`plugin catalogue: the registry scan failed (${e && e.message}) — serving the zero-plugin catalogue`);
+    catalogue = buildPluginIndex([], { vanilla: content.cs });
+  }
+  const indexKib = (JSON.stringify(content.index).length / 1024).toFixed(1);
+  writeFileSync(join(here, 'src', 'content.generated.js'), [
+    '// Generated by cloudflare/build.mjs — do not edit (see §4b).',
+    '// VANILLA_CONTENT: the installation\'s content identity, computed at build time with server/plugins/identity.js',
+    '// (a Worker cannot read the files it hashes). PLUGIN_INDEX: the catalogue GET /plugins/index.json answers with —',
+    '// upstream\'s own registry scan over public/i18n, data/i18n, packs/ and plugins/, run at build time.',
+    `export const VANILLA_CONTENT = ${JSON.stringify(content)};`,
+    `export const PLUGIN_INDEX = ${JSON.stringify(catalogue)};`,
+    '',
+  ].join('\n'));
+  log(`content identity: cs ${content.cs.slice(0, 16)} — ${Object.keys(content.simFiles).length} code files, `
+    + `${Object.keys(content.data).length} data files, /cs/ index ${indexKib} KiB; `
+    + `plugin catalogue: ${catalogue.plugins.length} entr(ies) (${catalogue.plugins.map((p) => p.id).join(', ') || 'none'})`);
 }
 
 // A fork's own announcement config (config/announcements.json — the file xinhai-ai's server reads) is baked in as

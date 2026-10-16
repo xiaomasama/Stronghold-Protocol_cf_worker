@@ -4,6 +4,9 @@
 //   /ws            → the GameServer Durable Object (WebSocket upgrade; the object runs server/net.js)
 //   /healthz       → the same object (build tag + live counters, see server/index.js handleRequest)
 //   /media/<path>  → extension-less audio, resolved against the asset store (src/media.js)
+//   /plugins/index.json, /cs/<cs16>/index.json → the plugin catalogue and the vanilla content set's index, baked at
+//                    build time (0.3.0; no plugins are installed — see the route comments)
+//   /packs/<id>/<file>, /packs/index.json → the content packs (src/packs.js)
 //   everything else→ the static asset store (dist/, assembled by build.mjs)
 //
 // The Worker itself never touches the game data or the lobby: only the Durable Object boots them, so a static
@@ -19,6 +22,8 @@ import { serveAnnounceApi } from './announce.js';
 import { serveServerInfoApi } from './server-info.js';
 import { REAL_IP_HEADER } from './req-shim.js';
 import { splitHashedPath } from '../.generated/shared/assetPaths.js';
+import { csUrlPart } from '../.generated/shared/plugins/identity.js';
+import { VANILLA_CONTENT, PLUGIN_INDEX } from './content.generated.js';
 
 export { GameServer };
 
@@ -129,6 +134,30 @@ export default {
     // mirrors server/http/static.js. Language packs are ordinary files at /i18n/… and /data/i18n/… .
     const packs = await servePacks(request, env, url);
     if (packs) return packs;
+
+    // The plugin catalogue and the vanilla content set's index (0.3.0, DESIGN §32; server/http/static.js). Both are
+    // built from the plugin registry there; this deployment ships no plugins, so the catalogue is the zero-plugin
+    // document the build baked with upstream's own builder (build.mjs §4b), and /cs/<cs16>/index.json answers for the
+    // one content set that exists — the vanilla one, at the hash /healthz and welcome.content report.
+    // Everything else under /cs/ (a set with gameplay plugins), /vs/ (a visual set) and /p/ (plugin files) falls
+    // through to the asset store and 404s: there is nothing to serve. See cloudflare/README.md 「已知差异」.
+    if (url.pathname === '/plugins/index.json') {
+      if (request.method !== 'GET' && request.method !== 'HEAD') return methodNotAllowed();
+      return new Response(JSON.stringify(PLUGIN_INDEX), {
+        headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+      });
+    }
+    if (url.pathname === `/cs/${csUrlPart(VANILLA_CONTENT.cs)}/index.json`) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') return methodNotAllowed();
+      return new Response(JSON.stringify(VANILLA_CONTENT.index), {
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          // the URL names the content: static.js answers this with IMMUTABLE_JSON and an ETag of the same form
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'ETag': `"cs-${csUrlPart(VANILLA_CONTENT.cs)}-v${PLUGIN_INDEX.version}"`,
+        },
+      });
+    }
 
     // Content-hashed asset URLs (upstream 0.2.6, shared/assetPaths.js): the served data/assets.json names every
     // file as /assets/~<hash>/… (fonts likewise, audio as /media/~<hash>/…), so a browser may keep it for a year.

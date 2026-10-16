@@ -30,6 +30,7 @@ import { bootData } from './data-boot.js';
 import { reqShim } from './req-shim.js';
 import { WsShim } from './ws-shim.js';
 import { BUILD_TAG } from './build-info.generated.js';
+import { VANILLA_CONTENT } from './content.generated.js';
 import { readAnnouncements, parseAnnouncements, liveAnnouncement, announcementBody } from './announce.js';
 
 /** Env vars that Match/Lobby read through process.env (server/match/Match.js `env()`); set as `[vars]`. */
@@ -153,6 +154,11 @@ export class GameServer {
       registry,
       log,
       getData: () => data,
+      // The installation's content identity, computed at build time (build.mjs §4b): it reaches the client in
+      // `welcome.content` and every room.state, and names the vanilla set. `plugins` and `hosts` are left unset —
+      // a server without plugins is the case upstream's Lobby is written for (its rooms are never modded, so no
+      // content set and no match host is ever needed; cloudflare/README.md explains why this deployment has none).
+      content: VANILLA_CONTENT,
       options: lobbyOptions,
     });
     const network = new Network({ registry, handler: lobby, log, options: pickNumbers(this.env, NET_OPTIONS) });
@@ -179,7 +185,15 @@ export class GameServer {
         sockets: network.connectionCount,
         sessions: registry.size,
         ...lobby.stats(),
-        content: { kits: Object.keys(KITS).length, domains: MODULES.filter(([, mod]) => typeof mod?.install === 'function').length },
+        // healthReport's `content` block: the vanilla content hash (a page compares it with welcome.content and the
+        // diagnostics name it) and the live content sets — 0 here, since a room can only have gameplay plugins when
+        // the server has plugins at all. `kits`/`domains` are this adapter's additions.
+        content: {
+          vanilla: VANILLA_CONTENT.cs,
+          sets: 0,
+          kits: Object.keys(KITS).length,
+          domains: MODULES.filter(([, mod]) => typeof mod?.install === 'function').length,
+        },
         dataKeys: Object.keys(lobby.getData()).length,
       });
     }

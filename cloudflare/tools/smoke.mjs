@@ -250,6 +250,44 @@ console.log('\n[packs]');
   if (langFile) check(langFile.status === 404, 'GET /packs/<lang>/<file> → 404 (language packs are plain files)', String(langFile.status));
 }
 
+// The content identity, the plugin catalogue and the vanilla content set (0.3.0, DESIGN §32). This deployment runs
+// the vanilla set with no plugins; the hash the pages compare travels in welcome/room.state//healthz, and the two
+// documents upstream serves from its registry and content identity are baked at build time (build.mjs §4b).
+/** the deployment's content hash, filled in here and asserted against welcome below */
+let serverCs = '';
+console.log('\n[content identity]');
+{
+  const health = await get('/healthz');
+  let h = null;
+  try { h = JSON.parse(health.body); } catch { /* the check below reports it */ }
+  serverCs = h && h.content && typeof h.content.vanilla === 'string' ? h.content.vanilla : '';
+  check(/^[0-9a-f]{64}$/.test(serverCs), 'GET /healthz → content.vanilla is the content hash', serverCs ? `${serverCs.slice(0, 16)}…` : '(none)');
+  check(!!h && !!h.content && h.content.sets === 0, 'healthz reports 0 modded content sets (no gameplay plugins)', h && h.content ? String(h.content.sets) : '-');
+  if (serverCs) {
+    const idx = await get(`/cs/${serverCs.slice(0, 16)}/index.json`);
+    let body = null;
+    try { body = JSON.parse(idx.body); } catch { /* reported below */ }
+    check(idx.status === 200 && !!body && typeof body === 'object', 'GET /cs/<cs16>/index.json → the vanilla content set\'s index', `${idx.status} ${idx.type}`);
+    check(!!idx.cache && idx.cache.includes('immutable'), 'the content index is immutable (the URL names the content)', idx.cache || '(none)');
+  }
+  const otherCs = await get('/cs/0000000000000000/index.json');
+  check(otherCs.status === 404, 'GET /cs/<unknown>/index.json → 404 (no such content set)', String(otherCs.status));
+
+  const cat = await get('/plugins/index.json');
+  let c = null;
+  try { c = JSON.parse(cat.body); } catch { /* reported below */ }
+  check(cat.status === 200 && !!c && Array.isArray(c.plugins), 'GET /plugins/index.json → the plugin catalogue', `${cat.status} ${cat.type}`);
+  check(!!c && !!c.content && c.content.vanilla === serverCs, 'the catalogue names the same vanilla content', c && c.content ? `${String(c.content.vanilla).slice(0, 16)}…` : '-');
+  const unofficial = c ? c.plugins.filter((p) => p && p.class !== 'lang').length : -1;
+  check(unofficial === 0, 'no unofficial plugins are installed (the vanilla set is what rooms play)', c ? `${c.plugins.length} entr(ies), ${unofficial} unofficial` : '-');
+  check(cat.cache === 'no-store', 'the catalogue is served no-store', cat.cache || '(none)');
+
+  const vs = await get('/vs/0000000000000000/overlay.json');
+  check(vs.status === 404, 'GET /vs/<vs16>/overlay.json → 404 (no visual sets: nothing to compose)', String(vs.status));
+  const pluginFile = await get('/p/some/00000000/x.png');
+  check(pluginFile.status === 404, 'GET /p/<id>/<hash8>/<path> → 404 (no plugin files)', String(pluginFile.status));
+}
+
 // Site announcements + the adapter's preload page (src/announce.js, public/sp-announce.js, public/preload.html)
 console.log('\n[announce & preload]');
 {
@@ -384,6 +422,14 @@ try {
   const welcomeA = await a.next('welcome');
   check(!!welcomeA.playerId && !!welcomeA.token, 'hello → welcome (session minted)', `playerId=${welcomeA.playerId}`);
   check(welcomeA.resumed === false, 'fresh session is not flagged resumed');
+  // The client gates every plugin feature on welcome.content (public/js/main.js pluginCount): `vanilla` names the
+  // content the pages compare, and `plugins` is only sent when the server has unofficial plugins at all. With none,
+  // the title screen has no plugin count, the catalogue is never fetched and no room carries a 插件 tag.
+  check(!!welcomeA.content && welcomeA.content.vanilla === serverCs,
+    'welcome carries the same content hash as /healthz (the vanilla set)', welcomeA.content ? `${String(welcomeA.content.vanilla).slice(0, 16)}…` : '(none)');
+  check(!!welcomeA.content && welcomeA.content.plugins === undefined,
+    'welcome says the server has no plugins (every plugin UI stays out of the page)',
+    welcomeA.content && welcomeA.content.plugins !== undefined ? `${welcomeA.content.plugins} plugin(s)` : 'absent');
 
   a.send({ t: 'ping', c: 1 });
   const pongMsg = await a.next('pong');
@@ -393,6 +439,12 @@ try {
   const stateA = await a.next('room.state');
   check(!!stateA.code && stateA.code.length >= 4, 'room.create → room.state', `code=${stateA.code}`);
   const code = stateA.code;
+  // room.state.content is the room's content: `{ cs, vanilla: true, plugins: [] }` while it has no plugin (the
+  // client shows its 插件 tag from a non-empty plugins list, and a modded room — vanilla: false — has a cs of its own)
+  check(!!stateA.content && stateA.content.cs === serverCs && stateA.content.vanilla === true
+    && Array.isArray(stateA.content.plugins) && stateA.content.plugins.length === 0,
+    'room.state carries the vanilla content (no 插件 tag on any seat)',
+    stateA.content ? `${String(stateA.content.cs).slice(0, 16)}…, ${Array.isArray(stateA.content.plugins) ? stateA.content.plugins.length : '-'} plugin(s)` : '(none)');
   const humansA = (stateA.seats || []).filter((s) => s && !s.isBot).length;
   check(humansA === 1, 'one human seat is taken', `${humansA}`);
 
